@@ -96,7 +96,7 @@ async def run_agent_sandbox(user_prompt: str) -> str:
         # Check if the message is an AIMessage with tool calling intentions
         tool_calls_str = ""
         if hasattr(message, "tool_calls") and message.tool_calls:
-            tool_calls_str = f" 🛠️ [Triggers Tools: {', '.join([tc['name'] for tc in message.tool_calls])}]"
+            tool_calls_str = f"[Triggers Tools: {', '.join([tc['name'] for tc in message.tool_calls])}]"
 
         print(f"\n[Step {i}] {role}:{tool_calls_str}")
         print("-" * 30)
