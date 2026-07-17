@@ -1,0 +1,12 @@
+# Ignore local virtual environments (Docker builds its own internal environments)
+**/benv/
+
+# Ignore Python bytecode caches
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+**/.tmp/
+
+.env
+**/data/

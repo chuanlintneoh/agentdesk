@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+pydantic
+yfinance
+sec-edgar-downloader
+chromadb
+fastmcp
+langgraph
+langchain
+langchain-mcp-adapters
+langchain-groq
