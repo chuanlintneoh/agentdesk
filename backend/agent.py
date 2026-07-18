@@ -3,15 +3,18 @@ import asyncio
 from dotenv import load_dotenv
 
 from langgraph.graph import StateGraph, START, END, MessagesState
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, ToolMessage, HumanMessage
 from langchain_groq import ChatGroq
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
+from helper.debug import debug_print
+
 load_dotenv()
 
-async def run_agent_sandbox(user_prompt: str) -> str:
-    print("Initializing Multi-Server MCP Gateway & Custom Orchestration Graph...")
+async def compile_state_graph() -> CompiledStateGraph:
+    debug_print("Initializing Multi-Server MCP Gateway & Custom Orchestration Graph...")
 
     # client = MultiServerMCPClient({
     #     "core_utility_server": {
@@ -29,21 +32,44 @@ async def run_agent_sandbox(user_prompt: str) -> str:
 
     # 1. Define tools and model
     mcp_tools = await client.get_tools()
-    print(f"Auto-discovered {len(mcp_tools)} tools from FastMCP server.")
+    debug_print(f"Auto-discovered {len(mcp_tools)} tools from FastMCP server.")
     # https://console.groq.com/docs/rate-limits
-    # llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
-    llm = ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct", temperature=0)
+    # llm = ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct", temperature=0) # deprecate 17/7/2026
+    # llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0) # deprecate 16/8/2026
+    llm = ChatGroq(model="openai/gpt-oss-120b", temperature=0)
+    # llm = ChatGroq(model="qwen/qwen3.6-27b", temperature=0)
+    compressor_llm = ChatGroq(model="openai/gpt-oss-20b", temperature=0)
+
     llm_with_tools = llm.bind_tools(mcp_tools)
     system_instruction = SystemMessage(
-        content= (
-            "You are an advanced agent assistant named AgentDesk.\n"
-            "You have access to structured relational databases via SQL and unstructured documentation via RAG tools.\n"
-            "Analyze the user's prompt, dynamically call the appropriate tools to collect the necessary facts, "
-            "and synthesize a clean, precise response based strictly on the retrieved data.\n\n"
-            "CRITICAL: When choosing to invoke a tool, you must format the arguments as a "
-            "strict, valid JSON object matching the tool's schema exactly. Do not add raw text, "
-            "malformed syntax, or unescaped characters inside the tool argument blocks."
-        )
+        content=
+        """# Role & Objective
+You are AgentDesk, an autonomous, highly capable AI Agent designed to solve complex data tasks. Your primary objective is to achieve the user's goal by strictly following a cyclical process of reasoning, exploring data structures, executing actions via configured tools, and validating outcomes.
+
+# Execution Rules & Guidelines
+1. Schema First, Query Second: When interacting with any database table or data source for the first time, you MUST check its structural layout first (e.g., using schema discovery, column listings, or metadata tools) before writing data queries. Never guess data fields or column names.
+2. Data Efficiency: Avoid wide generic dumps (like `SELECT *`). Explicitly request only the exact, targeted columns or fields required to answer the prompt.
+3. Error Handling: If a tool returns an error, do not repeat the exact same request. Check the table or dataset structural info to diagnose the issue, adjust your syntax, and try a corrected approach.
+4. Information Sufficiency: If the message history already contains enough empirical data to fully satisfy the user's goal, answer directly without executing further tool routines.
+5. Exact Column Character Matching: When writing SQL queries, you MUST use the exact string casing, spaces, and punctuation discovered from the schema logs. If a column contains spaces, you MUST wrap it in double quotes exactly as defined. Never assume columns use snake_case or camelCase if the schema details state otherwise.
+6. Syntax Memory Resilience: If a query fails with a message indicating a column does not exist, do not invoke metadata or re-verify the schema. Meticulously review previous successful trace responses in your execution history, identify syntax discrepancies, adjust your syntax layout, and re-execute immediately.
+7. Complete Record Exhaustion: When querying a specific row, timestamp, or unique record index, you are strictly prohibited from making sequential, separate tool calls to fetch additional attributes from that same record layer later. You must extract ALL columns (`SELECT *`) for that specific target row on your very first query, or explicitly pull every available attribute associated with that record key at once. Gather full row contexts immediately to ensure all potential downstream analysis requirements are satisfied in a single round-trip.
+8. Platform-Agnostic Error Resolution: Do not assume a specific database system catalog layout when exploring schemas. Rely entirely on the auto-discovered tools and row previews (`LIMIT 1` or equivalent sample fetches) to determine structural names. If a query or tool execution returns a syntax or structural engine failure, you are forbidden from reverting to generic schema discovery loops. Inspect the active log history for structural layouts, apply the necessary identifier wrapping adjustments (e.g., handling spaces or casing rules dictated by the platform error message), and re-execute the corrected payload immediately on the next step.
+
+# Analytical Protocol
+For every tool step, maintain a clear internal strategy:
+1. Analyze what the user is seeking and state your immediate data goal.
+2. Inspect the metadata or schemas of the plugged-in data sources to map out an accurate query plan.
+3. Execute your targeted query, observe the output payload, and verify if you have enough information to compile the final analysis.
+
+# Tone & Style
+- Be objective, analytical, and highly precise when describing metrics and data relationships.
+- Present final answers in a professional, clear, and well-structured format using markdown tables where relevant.
+- Do not mix conversational filler into raw data payloads or parameters."""
+    )
+    compression_instruction = SystemMessage(
+        content=
+        """You are a text compression engine. Condense the following raw data payload into a highly comprehensive bulleted summary. Retain ALL exact numerical values, dates, and structural column names, but eliminate raw formatting, whitespace, and JSON syntax."""
     )
 
     # 2. Define state
@@ -53,9 +79,43 @@ async def run_agent_sandbox(user_prompt: str) -> str:
     async def call_model(state: MessagesState):
         # Prepend system rules to the active conversation history matrix
         messages = [system_instruction] + state["messages"]
+        debug_print(f"Calling model with last message: {state['messages'][-1].content[:100]}...")
         response = await llm_with_tools.ainvoke(messages)
         # Return updates to append cleanly back into the centralized graph state
+        # Case 1: AIMessage with empty `content` but populated data in `tool_calls` > Calling tool
+        # Case 2: AIMessage with populated data in `content` and `tool_calls` > CoT execution
+        # Case 3: AIMessage with populated data in `content` but empty `tool_calls` > Direct response
         return {"messages": [response]}
+    
+    async def distill_tool_response(state: MessagesState):
+        last_message = state["messages"][-1]
+
+        # Intercept if the newly returned payload is too heavy
+        if isinstance(last_message, ToolMessage):
+            content_text = ""
+            if isinstance(last_message.content, list) and len(last_message.content) > 0:
+                # If it's wrapped in a LangGraph structured list, grab the text attribute
+                content_text = last_message.content[0].get("text", "")
+            else:
+                # Fallback to standard string translation
+                content_text = str(last_message.content)
+
+            if len(content_text) > 200:
+                debug_print(f"Detected length of payload ({len(content_text)}) exceeding threshold, distilling raw payload into summary...")
+                payload_prompt = HumanMessage(content=f"Raw Data Payload to condense:\n{content_text}")
+                compression_prompt = [compression_instruction, payload_prompt]
+                summary = await compressor_llm.ainvoke(compression_prompt)
+                distilled_message = ToolMessage(
+                    content=f"[DISTILLED DATA SUMMARY]:\n{summary.content}" if summary.content.strip() else last_message.content,
+                    tool_call_id=last_message.tool_call_id,
+                    name=getattr(last_message, "name", "distill"),
+                    status=getattr(last_message, "status", "success"),
+                    id=getattr(last_message, "id", None)
+                )
+                return {"messages": [distilled_message]}
+        
+            debug_print(f"Detected length of payload ({len(content_text)}) does not exceed threshold, distillation skipped.")
+        return {"messages": []}
 
     # 4. Define tool node
     tool_node = ToolNode(mcp_tools)
@@ -65,7 +125,9 @@ async def run_agent_sandbox(user_prompt: str) -> str:
         last_message = state["messages"][-1]
         # Conditional Check: If the model generated tool calls, loop to the execution station
         if getattr(last_message, "tool_calls", None):
+            debug_print("Redirecting to tool")
             return "tools"
+        debug_print("Ending agentic workflow")
         # Otherwise, the model gave a conversational answer—route directly to the finish line
         return END
 
@@ -73,7 +135,10 @@ async def run_agent_sandbox(user_prompt: str) -> str:
     workflow = StateGraph(MessagesState)
     workflow.add_node("agent", call_model)
     workflow.add_node("tools", tool_node)
+    workflow.add_node("distill", distill_tool_response)
     workflow.add_edge(START, "agent")
+    workflow.add_edge("tools", "distill")
+    workflow.add_edge("distill", "agent")
     workflow.add_conditional_edges(
         "agent",
         should_continue, # run this func to see what it returns
@@ -82,13 +147,18 @@ async def run_agent_sandbox(user_prompt: str) -> str:
             END: END
         } # map the func result to the next dest
     )
-    workflow.add_edge("tools", "agent")
     compiled_agent = workflow.compile()
-    print(f"Dispatching graph execution loop for instruction: '{user_prompt}'...\n")
+    debug_print("Agent compiled successfully.")
+    return compiled_agent
+    
+async def run_agent_sandbox(user_prompt: str) -> str:
+    compiled_agent = compile_state_graph()
+    debug_print(f"Dispatching graph execution loop for instruction: '{user_prompt}'...\n")
     # Execute the runtime system
     initial_input = {"messages": [("user", user_prompt)]}
     final_state = await compiled_agent.ainvoke(initial_input)
-    print("\nComplete Execution Steps")
+
+    debug_print("\nComplete Execution Steps")
     for i, message in enumerate(final_state["messages"], 1):
         # Determine the role actor name
         role = message.__class__.__name__.replace("Message", "")
@@ -98,9 +168,9 @@ async def run_agent_sandbox(user_prompt: str) -> str:
         if hasattr(message, "tool_calls") and message.tool_calls:
             tool_calls_str = f"[Triggers Tools: {', '.join([tc['name'] for tc in message.tool_calls])}]"
 
-        print(f"\n[Step {i}] {role}:{tool_calls_str}")
-        print("-" * 30)
-        print(message.content or "[Empty content payload - Check tool_calls or metadata]")
+        debug_print(f"\n[Step {i}] {role}:{tool_calls_str}")
+        debug_print("-" * 30)
+        debug_print(message.content or "[Empty content payload - Check tool_calls or metadata]")
 
     return final_state["messages"][-1].content
 
