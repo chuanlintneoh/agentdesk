@@ -1,5 +1,7 @@
 # AgentDesk
 
+![App Screenshot](https://github.com/user-attachments/assets/b45e72c4-229b-4283-b608-278585c79112)
+
 ## Run the App
 
 1. python scripts/db_setup.py # run script to setup example databases
