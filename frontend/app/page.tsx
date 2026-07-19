@@ -2,10 +2,31 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import Markdown from "markdown-to-jsx";
+import {
+  Sparkles,
+  Terminal,
+  Wrench,
+  Cpu,
+  ArrowRight,
+  CornerDownLeft,
+  Play,
+  Trash2,
+  RefreshCw,
+  ShieldAlert,
+  Code,
+  Scroll,
+  ArrowDown,
+  Check,
+  Copy,
+  ChevronDown,
+  Layers,
+  User,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface AgentStep {
   role: string;
@@ -13,7 +34,22 @@ interface AgentStep {
   tool_calls?: any[];
 }
 
-const SCROLL_BOTTOM_THRESHOLD_PX = 80;
+const SCROLL_BOTTOM_THRESHOLD_PX = 120;
+
+const SUGGESTIONS = [
+  {
+    label: "Audit System Health",
+    text: "Perform a comprehensive health check of the system services and background workers.",
+  },
+  {
+    label: "DB Performance",
+    text: "Analyze the analytical database for performance bottlenecks and slow query patterns.",
+  },
+  {
+    label: "Trace User Journey",
+    text: "Generate a trace report for the latest multi-stage user authentication journey.",
+  },
+];
 
 function isNearPageBottom() {
   return (
@@ -27,7 +63,6 @@ function CopyButton({ content }: { content: any }) {
 
   const handleCopy = async () => {
     try {
-      // Ensure we extract the pure string text if the content is an object or array
       const textToCopy =
         typeof content === "string"
           ? content
@@ -37,7 +72,7 @@ function CopyButton({ content }: { content: any }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
-      console.error("Failed to copy text layout: ", err);
+      console.error("Failed to copy:", err);
     }
   };
 
@@ -45,9 +80,19 @@ function CopyButton({ content }: { content: any }) {
     <button
       onClick={handleCopy}
       type="button"
-      className="ml-3 px-2 py-1 text-xs font-mono rounded bg-zinc-800 border border-zinc-700 text-zinc-300 hover:bg-zinc-700 transition-colors"
+      className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono rounded-md bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700/60 text-zinc-300 transition-all duration-200"
     >
-      {copied ? "Copied! 👍" : "Copy"}
+      {copied ? (
+        <>
+          <Check className="size-3.5 text-emerald-400" />
+          <span className="text-emerald-400">Copied</span>
+        </>
+      ) : (
+        <>
+          <Copy className="size-3.5" />
+          <span>Copy</span>
+        </>
+      )}
     </button>
   );
 }
@@ -56,6 +101,7 @@ export default function AgentWorkbench() {
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [trace, setTrace] = useState<AgentStep[]>([]);
+  const [systemReady, setSystemReady] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
 
@@ -72,17 +118,38 @@ export default function AgentWorkbench() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [trace]);
 
+  // Health check polling
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const res = await fetch("http://localhost:8001/health");
+        setSystemReady(res.ok);
+      } catch (err) {
+        setSystemReady(false);
+      }
+    };
+
+    checkHealth();
+    const interval = setInterval(checkHealth, 30000); // 30s interval
+    return () => clearInterval(interval);
+  }, []);
+
   const scrollToLatest = () => {
     stickToBottomRef.current = true;
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  const handleExecute = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!prompt.trim()) return;
+  const handleExecute = async (
+    e?: React.FormEvent,
+    overridePrompt?: string,
+  ) => {
+    e?.preventDefault();
+    const activePrompt = overridePrompt || prompt;
+    if (!activePrompt.trim()) return;
 
     setLoading(true);
-    setTrace([]);
+    setPrompt(""); // Clear input box
+    setTrace([{ role: "User", content: activePrompt }]); // Start trace with user prompt
     stickToBottomRef.current = true;
 
     try {
@@ -91,13 +158,12 @@ export default function AgentWorkbench() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ prompt: prompt }),
+        body: JSON.stringify({ prompt: activePrompt }),
       });
 
       if (!response.ok) throw new Error("Server communication broken.");
       if (!response.body) return;
 
-      // 🔌 Initialize the chunk-by-chunk stream reader
       const reader = response.body.getReader();
       const decoder = new TextDecoder("utf-8");
       let buffer = "";
@@ -106,22 +172,16 @@ export default function AgentWorkbench() {
         const { value, done } = await reader.read();
         if (done) break;
 
-        // Decode the binary stream chunk into plain text
         buffer += decoder.decode(value, { stream: true });
-
-        // SSE streams separate events with double newlines (\n\n)
         const parts = buffer.split("\n\n");
-        buffer = parts.pop() || ""; // Save any incomplete line back to the buffer
+        buffer = parts.pop() || "";
 
         for (const part of parts) {
           const trimmedPart = part.trim();
           if (trimmedPart.startsWith("data: ")) {
-            // Strip out the "data: " prefix to extract just the raw JSON string
             const jsonString = trimmedPart.replace("data: ", "").trim();
             try {
               const newStep: AgentStep = JSON.parse(jsonString);
-
-              // Append each reasoning step to the UI live
               setTrace((prev) => [...prev, newStep]);
             } catch (err) {
               console.error("Failed parsing stream token:", err);
@@ -131,11 +191,12 @@ export default function AgentWorkbench() {
       }
     } catch (err) {
       console.error("Connection failed:", err);
-      setTrace([
+      setTrace((prev) => [
+        ...prev,
         {
           role: "System Error",
           content:
-            "Could not reach the FastAPI backend. Check your terminal logs or CORS configuration.",
+            "Could not reach the FastAPI backend. Ensure it is running at localhost:8001.",
         },
       ]);
     } finally {
@@ -144,171 +205,321 @@ export default function AgentWorkbench() {
   };
 
   return (
-    <main className="min-h-screen bg-zinc-950 text-zinc-50 p-8">
-      <div className="max-w-4xl mx-auto space-y-8">
-        <div className="border-b border-zinc-800 pb-4">
-          <h1 className="text-3xl font-default font-bold tracking-tight">
-            AgentDesk Workbench
-          </h1>
-          <p className="text-zinc-400 mt-1 font-default">
-            Orchestrating multi-server MCP environments.
-          </p>
-        </div>
+    <main className="min-h-screen bg-zinc-950 text-zinc-50 selection:bg-blue-500/30">
+      {/* Background Decor */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden opacity-20">
+        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-blue-500/10 blur-[120px] rounded-full translate-x-1/2 -translate-y-1/2" />
+        <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-indigo-500/10 blur-[120px] rounded-full -translate-x-1/2 translate-y-1/2" />
+      </div>
 
-        <form
-          onSubmit={handleExecute}
-          className="flex gap-3 bg-zinc-900 p-4 rounded-xl border border-zinc-800"
-        >
-          <Input
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Ask a multi-step analytical question..."
-            disabled={loading}
-            className="bg-zinc-950 border-zinc-800 text-zinc-100 placeholder:text-zinc-500 h-12 font-default"
-          />
-          <Button
-            type="submit"
-            disabled={loading}
-            className="bg-blue-600 hover:bg-blue-500 h-12 px-6 text-white font-medium font-default"
+      <div className="relative max-w-4xl mx-auto px-6 py-12 space-y-10">
+        {/* Header Section */}
+        <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-6 border-b border-zinc-900">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 mb-1">
+              <div
+                className={cn(
+                  "size-2 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.5)] animate-pulse",
+                  systemReady
+                    ? "bg-emerald-500"
+                    : "bg-rose-500 shadow-rose-500/50",
+                )}
+              />
+              <span
+                className={cn(
+                  "text-[10px] font-bold tracking-widest uppercase",
+                  systemReady ? "text-emerald-500/80" : "text-rose-500/80",
+                )}
+              >
+                {systemReady ? "System Ready" : "System Offline"}
+              </span>
+            </div>
+            <h1 className="text-4xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-400 animate-gradient-slow">
+              AgentDesk{" "}
+              <span className="font-light text-zinc-400/80">Workbench</span>
+            </h1>
+            <p className="text-zinc-500 text-sm font-medium">
+              Multi-node MCP Agent Orchestrator & Trace Visualizer.
+            </p>
+          </div>
+          <div className="flex items-center gap-3 h-10 px-4 rounded-full bg-zinc-900/50 border border-zinc-800/80 text-zinc-400 text-xs font-mono">
+            <Layers className="size-3.5 text-blue-500" />
+            localhost:8001
+          </div>
+        </header>
+
+        {/* Prompt Input Section */}
+        <section className="space-y-4">
+          <form
+            onSubmit={handleExecute}
+            className="group relative bg-zinc-900/40 border border-zinc-800/60 rounded-2xl p-1 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500/40 transition-all duration-300"
           >
-            {loading ? "Running..." : "Execute"}
-          </Button>
-        </form>
+            <div className="flex items-center gap-3 px-4 pt-3">
+              <Terminal className="size-4 text-zinc-500 group-focus-within:text-blue-400 transition-colors" />
+              <span className="text-xs font-mono font-bold text-zinc-600 group-focus-within:text-zinc-500 uppercase tracking-wider">
+                Session Console
+              </span>
+            </div>
+            <Input
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="Enter a multi-step analytical command..."
+              disabled={loading}
+              className="w-full bg-transparent border-0 ring-0 focus-visible:ring-0 text-lg py-6 h-auto px-4 placeholder:text-zinc-600 font-default"
+            />
+            <div className="flex items-center justify-between p-3 bg-zinc-900/20 rounded-xl mt-1">
+              <div className="flex items-center gap-2 text-[10px] text-zinc-600 font-mono px-2">
+                <span className="bg-zinc-800 px-1 rounded text-zinc-400">
+                  ENTER
+                </span>{" "}
+                to execute
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setTrace([]);
+                    setPrompt("");
+                  }}
+                  variant="ghost"
+                  className="h-9 w-9 p-0 text-zinc-500 hover:text-rose-400 hover:bg-rose-400/10 rounded-lg"
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={loading || !prompt.trim()}
+                  className="bg-blue-600 hover:bg-blue-500 text-white rounded-lg h-9 px-5 gap-2 transition-all duration-300 font-bold shadow-lg shadow-blue-900/20"
+                >
+                  {loading ? (
+                    <RefreshCw className="size-4 animate-spin" />
+                  ) : (
+                    <>
+                      <span>Run</span>
+                      <Play className="size-3.5 fill-current" />
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </form>
 
-        <div className="space-y-4">
-          <h2 className="text-lg font-semibold tracking-wide text-zinc-300 font-default">
-            Live Graph Traces
-          </h2>
+          {/* Suggestions */}
+          {!loading && trace.length === 0 && (
+            <div className="flex flex-wrap gap-2.5 pt-2">
+              {SUGGESTIONS.map((s, i) => (
+                <button
+                  key={i}
+                  onClick={() => {
+                    setPrompt(s.text);
+                    handleExecute(undefined, s.text);
+                  }}
+                  className="px-3.5 py-1.5 rounded-full bg-zinc-900/40 border border-zinc-800 hover:bg-zinc-800/80 hover:border-zinc-700 text-zinc-400 hover:text-zinc-200 text-xs transition-all duration-200 cursor-pointer"
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Trace Timeline */}
+        <section className="space-y-8 relative">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-600 flex items-center gap-2">
+              <Scroll className="size-4" />
+              Agent Workflow Trace
+            </h2>
+            {trace.length > 0 && (
+              <Badge
+                variant="outline"
+                className="bg-blue-500/5 text-blue-400 border-blue-500/20 text-[10px] py-0.5 px-2.5 font-mono"
+              >
+                {trace.length} Node{trace.length !== 1 ? "s" : ""} recorded
+              </Badge>
+            )}
+          </div>
 
           {trace.length === 0 && !loading && (
-            <div className="text-center text-zinc-600 py-12 border border-dashed border-zinc-800 rounded-xl font-default">
-              Awaiting prompt execution loops...
+            <div className="flex flex-col items-center justify-center py-20 border border-dashed border-zinc-900 rounded-2xl bg-zinc-950/40 group">
+              <div className="size-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                <Cpu className="size-6 text-zinc-700" />
+              </div>
+              <p className="text-zinc-600 font-medium tracking-tight">
+                Awaiting model orchestration loops...
+              </p>
             </div>
           )}
 
-          {trace.map((step, idx) => (
-            <Card
-              key={idx}
-              className="bg-zinc-900 border-zinc-800 text-zinc-100"
-            >
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-mono text-zinc-400">
-                  Step {idx + 1}: {step.role}
-                </CardTitle>
-                <div className="flex items-center gap-2">
-                  {step.tool_calls && (
-                    <Badge
-                      variant="outline"
-                      className="text-amber-400 border-amber-900 bg-amber-950/20"
-                    >
-                      🛠 Invoking: {step.tool_calls[0].name}
-                    </Badge>
-                  )}
-                  {step.content && <CopyButton content={step.content} />}
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="whitespace-pre-wrap text-sm text-zinc-300 font-sans leading-relaxed flex flex-col gap-3">
-                  {/* CHRONOLOGICAL AI ROUTING CASES */}
-                  {(() => {
-                    const hasContent =
-                      typeof step.content === "string" &&
-                      step.content.trim().length > 0;
-                    const hasToolCalls =
-                      step.tool_calls && step.tool_calls.length > 0;
+          <div className="relative space-y-6">
+            {/* The Timeline Line */}
+            {trace.length > 1 && (
+              <div className="absolute left-[19px] top-4 bottom-4 w-px bg-gradient-to-b from-blue-500/20 via-zinc-800 to-zinc-900/10" />
+            )}
 
-                    // # Case 1: AIMessage with empty `content` but populated data in `tool_calls` > Calling tool
-                    if (!hasContent && hasToolCalls) {
-                      return (
-                        <div className="space-y-1 opacity-90">
-                          <span className="text-xs font-mono text-zinc-500 block">
-                            🔧 Tool Invocation Parameter Space:
-                          </span>
-                          <pre className="p-3 bg-zinc-950/60 rounded-lg border border-zinc-800 text-xs font-mono text-amber-400 overflow-x-auto max-h-60">
-                            {JSON.stringify(
-                              step.tool_calls?.[0]?.args,
-                              null,
-                              2,
-                            )}
-                          </pre>
-                        </div>
-                      );
-                    }
+            {trace.map((step, idx) => {
+              const isTool = step.tool_calls && step.tool_calls.length > 0;
+              const isError = step.role.toLowerCase().includes("error");
 
-                    // # Case 2: AIMessage with populated data in `content` and `tool_calls` > CoT execution
-                    if (hasContent && hasToolCalls) {
-                      return (
-                        <div className="space-y-3">
-                          <div>
-                            <Markdown>{step.content as string}</Markdown>
-                          </div>
-                          <div className="space-y-1 opacity-90 pt-1">
-                            <span className="text-xs font-mono text-zinc-500 block">
-                              🔧 Parallel Execution Parameter Space:
-                            </span>
-                            <pre className="p-3 bg-zinc-950/60 rounded-lg border border-zinc-800 text-xs font-mono text-amber-400 overflow-x-auto max-h-60">
-                              {JSON.stringify(
-                                step.tool_calls?.[0]?.args,
-                                null,
-                                2,
+              let Icon = Cpu;
+              let iconColor = "text-blue-400";
+              let iconBg = "bg-blue-950/30";
+              let iconBorder = "border-blue-500/30";
+
+              if (isTool) {
+                Icon = Wrench;
+                iconColor = "text-amber-400";
+                iconBg = "bg-amber-950/30";
+                iconBorder = "border-amber-500/30";
+              } else if (step.role === "User") {
+                Icon = User;
+                iconColor = "text-emerald-400";
+                iconBg = "bg-emerald-950/30";
+                iconBorder = "border-emerald-500/30";
+              } else if (isError) {
+                Icon = ShieldAlert;
+                iconColor = "text-rose-400";
+                iconBg = "bg-rose-950/30";
+                iconBorder = "border-rose-500/30";
+              } else if (step.role.toLowerCase() === "system") {
+                Icon = Terminal;
+                iconColor = "text-zinc-400";
+                iconBg = "bg-zinc-900";
+                iconBorder = "border-zinc-700";
+              }
+
+              return (
+                <div
+                  key={idx}
+                  className="group relative pl-12 animate-in fade-in slide-in-from-left-2 duration-500 ease-out"
+                >
+                  {/* Timeline Node Icon */}
+                  <div
+                    className={cn(
+                      "absolute left-0 top-1 size-10 rounded-xl border flex items-center justify-center z-10 transition-transform duration-300 group-hover:scale-110",
+                      iconBg,
+                      iconBorder,
+                    )}
+                  >
+                    <Icon className={cn("size-5", iconColor)} />
+                  </div>
+
+                  <Card className="bg-zinc-900/40 border-zinc-800/80 overflow-hidden shadow-sm hover:shadow-md hover:border-zinc-700 transition-all">
+                    <div className="flex items-center justify-between px-4 py-3 bg-zinc-900/60 border-b border-zinc-800/80">
+                      <div className="flex items-center gap-3">
+                        <span className="text-[10px] font-mono font-bold text-zinc-500 uppercase tracking-widest bg-zinc-800/50 px-1.5 py-0.5 rounded">
+                          Node {idx + 1}
+                        </span>
+                        <h3 className="text-sm font-semibold text-zinc-300 capitalize">
+                          {step.role === "User" ? "Your Request" : step.role}
+                        </h3>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        {isTool && (
+                          <Badge
+                            variant="secondary"
+                            className="bg-amber-500/10 text-amber-500 border-amber-500/20 text-[10px] font-mono hover:bg-amber-500/20"
+                          >
+                            Invoke: {step.tool_calls?.[0]?.name}
+                          </Badge>
+                        )}
+                        {step.content && <CopyButton content={step.content} />}
+                      </div>
+                    </div>
+
+                    <CardContent className="p-4">
+                      <div className="text-sm leading-relaxed text-zinc-300 font-sans space-y-4">
+                        {(() => {
+                          const hasContent =
+                            typeof step.content === "string" &&
+                            step.content.trim().length > 0;
+                          const hasToolCalls =
+                            step.tool_calls && step.tool_calls.length > 0;
+
+                          return (
+                            <div className="space-y-4">
+                              {hasContent && (
+                                <div className="markdown-content">
+                                  <Markdown>{step.content as string}</Markdown>
+                                </div>
                               )}
+                              {hasToolCalls && (
+                                <div
+                                  className={cn(
+                                    "space-y-2",
+                                    hasContent &&
+                                      "pt-4 border-t border-zinc-800/50",
+                                  )}
+                                >
+                                  <div className="flex items-center gap-2 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                                    <Code className="size-3" />
+                                    {hasContent
+                                      ? "Parallel Invocation / Tool Parameters"
+                                      : "Tool Parameters"}
+                                  </div>
+                                  <pre className="p-3.5 bg-zinc-950 rounded-xl border border-zinc-800/60 text-[13px] font-mono text-amber-300/90 overflow-x-auto shadow-inner">
+                                    {JSON.stringify(
+                                      step.tool_calls?.[0]?.args,
+                                      null,
+                                      2,
+                                    )}
+                                  </pre>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+
+                        {/* Data Payloads (Objects/Arrays) */}
+                        {step.content && typeof step.content !== "string" && (
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                              <ChevronDown className="size-3" />
+                              Payload Response
+                            </div>
+                            <pre className="p-3.5 bg-zinc-950 rounded-xl border border-zinc-800/60 text-[13px] font-mono text-emerald-400/90 overflow-x-auto shadow-inner max-h-[500px]">
+                              {JSON.stringify(step.content, null, 2)}
                             </pre>
                           </div>
-                        </div>
-                      );
-                    }
+                        )}
 
-                    // # Case 3: AIMessage with populated data in `content` but empty `tool_calls` > Direct response
-                    if (hasContent && !hasToolCalls) {
-                      return (
-                        <div>
-                          <Markdown>{step.content as string}</Markdown>
-                        </div>
-                      );
-                    }
-
-                    return null;
-                  })()}
-
-                  {/* CAPTURING TOOL DATA RETURNS (SQL Matrix Array Payloads / RAG contexts) */}
-                  {step.content && typeof step.content !== "string" && (
-                    <div className="space-y-1">
-                      <span className="text-xs font-mono text-zinc-500 block">
-                        📥 Data Payload Returned:
-                      </span>
-                      <pre className="p-3 bg-zinc-950 rounded-lg border border-zinc-800 text-xs font-mono text-emerald-400 overflow-x-auto max-h-96">
-                        {JSON.stringify(step.content, null, 2)}
-                      </pre>
-                    </div>
-                  )}
-
-                  {/* SYSTEM RUNTIME FALLBACK */}
-                  {!step.content &&
-                    (!step.tool_calls || step.tool_calls.length === 0) && (
-                      <span className="text-zinc-600 italic text-xs block">
-                        Processing internal graph node...
-                      </span>
-                    )}
+                        {/* Fallback */}
+                        {!step.content &&
+                          (!step.tool_calls ||
+                            step.tool_calls.length === 0) && (
+                            <div className="flex items-center gap-2 text-zinc-600 italic py-2">
+                              <RefreshCw className="size-3 animate-spin" />
+                              <span className="text-xs">
+                                Processing internal graph node...
+                              </span>
+                            </div>
+                          )}
+                      </div>
+                    </CardContent>
+                  </Card>
                 </div>
-              </CardContent>
-            </Card>
-          ))}
-
-          <div ref={bottomRef} aria-hidden="true" />
-        </div>
+              );
+            })}
+            <div ref={bottomRef} className="h-4" aria-hidden="true" />
+          </div>
+        </section>
       </div>
 
+      {/* Floating Status Indicator */}
       {loading && (
         <button
           type="button"
           onClick={scrollToLatest}
-          className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-lg border border-blue-500/40 bg-blue-600 px-4 py-2.5 text-sm font-medium text-white shadow-lg shadow-blue-950/50 hover:bg-blue-500 transition-colors font-default"
+          className="fixed bottom-8 right-8 z-50 flex items-center gap-3 rounded-2xl bg-zinc-950/85 backdrop-blur-md border border-blue-500/30 pl-4 pr-5 py-3 text-xs font-bold text-white shadow-[0_8px_32px_rgba(0,0,0,0.4),0_0_20px_rgba(59,130,246,0.1)] hover:bg-zinc-900 transition-all duration-300 animate-in fade-in slide-in-from-bottom-4 group"
         >
-          <span className="relative flex size-2">
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-sky-300 opacity-75" />
-            <span className="relative inline-flex size-2 rounded-full bg-sky-200" />
+          <div className="relative flex size-2.5">
+            <span className="absolute inline-flex size-full animate-ping rounded-full bg-blue-400 opacity-75" />
+            <span className="relative inline-flex size-2.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)]" />
+          </div>
+          <span className="tracking-wide text-zinc-200">
+            Agent executing pipeline…
           </span>
-          Agent running…
+          <ArrowDown className="size-3 text-blue-400 group-hover:translate-y-0.5 transition-transform" />
         </button>
       )}
     </main>

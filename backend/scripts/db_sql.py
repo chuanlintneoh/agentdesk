@@ -1,10 +1,18 @@
 # Download Balance Sheet, Income Statement, Cash Flow tables from yfinance and save into local SQLite file for persistence
+import os
+import sys
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import sqlite3
 import yfinance as yf
+import pandas as pd
+import pickle
+from helper.debug import debug_print
 
-def download(ticker: str = "AAPL"):
+def parse_yfinance_data(ticker: str = "AAPL") -> dict[str, pd.DataFrame]:
     ticker_clean = ticker.upper().strip()
-    print(f"Fetching {ticker_clean} financial statements...")
+    debug_print(f"Fetching {ticker_clean} financial statements...")
     
     # Fetch company's ticker data
     company = yf.Ticker(ticker_clean)
@@ -32,26 +40,85 @@ def download(ticker: str = "AAPL"):
     df_cash = df_cash.reset_index()
     df_cash["Date"] = df_cash["Date"].astype(str)
 
-    return ticker_clean, df_income, df_balance, df_cash
+    return {
+        "income_statements": df_income,
+        "balance_sheets": df_balance,
+        "cash_flows": df_cash
+    }
 
-def setup(ticker_clean: str, df_income, df_balance, df_cash, db: str = "./data/agentdesk.db"):
-    db_clean = db.lower().strip()
-    print(f"Connecting to SQLite database ('{db_clean}')...")
-    conn = sqlite3.connect(db_clean)
+def parse_movie_dataset(dataset_path: str = ".tmp/movies/movie-scripts-corpus") -> dict[str, pd.DataFrame]:
+    # https://www.kaggle.com/datasets/gufukuro/movie-scripts-corpus
+    metadata_dir = os.path.join(dataset_path, "movie_metadata")
+    if not os.path.exists(metadata_dir):
+        raise FileNotFoundError(f"Missing dataset path: '{metadata_dir}'")
+    
+    df_reviews = None
+    df_movies = None
+    df_awards = None
+    df_characters = None
+    
+    reviews_file = os.path.join(metadata_dir, "metacritic_reviews_cut_versions.csv")
+    metadata_file = os.path.join(metadata_dir, "movie_meta_data.csv")
+    awards_file = os.path.join(metadata_dir, "screenplay_awards.csv")
+    characters_file = os.path.join(dataset_path, "movie_characters", "data", "character_genders.pickle")
+    if os.path.exists(reviews_file):
+        df_reviews = pd.read_csv(reviews_file)
+        df_reviews.columns = df_reviews.columns.str.strip().str.lower()
+    if os.path.exists(metadata_file):
+        df_movies = pd.read_csv(metadata_file)
+        df_movies.columns = df_movies.columns.str.strip().str.lower()
+    if os.path.exists(awards_file):
+        df_awards = pd.read_csv(awards_file)
+        df_awards.columns = df_awards.columns.str.strip().str.lower()
+    if os.path.exists(characters_file):
+        try:
+            with open(characters_file, "rb") as pf:
+                gender_data = pickle.load(pf)
+            
+            records = []
+            if isinstance(gender_data, dict):
+                for char_key, metadata in gender_data.items():
+                    # Handle both flat strings and dynamic sub-dictionaries inside the pickle file
+                    if isinstance(metadata, dict):
+                        record = {"character_key": char_key, **metadata}
+                    else:
+                        record = {"character_key": char_key, "gender": metadata}
+                    for key, value in list(record.items()):
+                        if isinstance(value, (list, dict, tuple)):
+                            record[key] = str(value)
+                    records.append(record)
+            if records:
+                df_characters = pd.DataFrame(records)
+                df_characters.columns = df_characters.columns.str.strip().str.lower()
+        except Exception as e:
+            debug_print(f"Failed to load character genders: {str(e)}")
+    
+    return {
+        "reviews": df_reviews,
+        "movies": df_movies,
+        "awards": df_awards,
+        "characters": df_characters
+    }
+
+def save_to_sqlite(dfs: dict[str, pd.DataFrame], db: str = "./data/agentdesk_sqlite.db"):
+    debug_print(f"Connecting to SQLite database ('{db}')...")
+    conn = sqlite3.connect(db)
     
     # Write tables to SQLite
-    prefix = f"{ticker_clean.lower()}"
-    df_income.to_sql(f"{prefix}_income_statement", conn, if_exists="replace", index=False)
-    df_balance.to_sql(f"{prefix}_balance_sheet", conn, if_exists="replace", index=False)
-    df_cash.to_sql(f"{prefix}_cash_flow", conn, if_exists="replace", index=False)
-    
-    print("SQL database populated! Created tables:")
-    print(f"   - {prefix}_income_statement")
-    print(f"   - {prefix}_balance_sheet")
-    print(f"   - {prefix}_cash_flow")
+    for table_name, df in dfs.items():
+        if df is not None:
+            df.to_sql(table_name, conn, if_exists="replace", index=False)
+            debug_print(f"Table '{table_name}' written to SQLite database.")
+        else:
+            debug_print(f"DataFrame for '{table_name}' is None. Skipping table creation.")
     
     conn.close()
+    debug_print(f"SQLite database setup completed and connection closed ('{db}').")
 
-def setup_sql(ticker: str, db: str = "./data/agentdesk.db"):
-    ticker_clean, df_income, df_balance, df_cash = download(ticker=ticker)
-    setup(ticker_clean, df_income, df_balance, df_cash, db)
+def setup_finance_sql(ticker: str, db: str = "./data/agentdesk_sqlite.db"):
+    dfs = parse_yfinance_data(ticker=ticker)
+    save_to_sqlite(dfs=dfs, db=db)
+
+def setup_movies_sql(dataset_path: str = ".tmp/movies/movie-scripts-corpus", db: str = "./data/agentdesk_sqlite.db"):
+    dfs = parse_movie_dataset(dataset_path=dataset_path)
+    save_to_sqlite(dfs=dfs, db=db)

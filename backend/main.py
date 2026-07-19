@@ -93,11 +93,37 @@ async def stream_agent_loop(payload: QueryRequest):
                             
                             # Model outputs or tool invocation triggers
                             if isinstance(msg, AIMessage):
+                                extracted_content = ""
+                                if isinstance(msg.content, list):
+                                    debug_print(f"AIMessage content is a list with {len(msg.content)} blocks.")
+                                    for block in msg.content:
+                                        if isinstance(block, dict):
+                                            if block.get("type") == "text":
+                                                extracted_content += block.get("text", "")
+                                            elif block.get("type") == "thought": # Check for specific thought blocks
+                                                extracted_content += f"\n[THOUGHT]:\n{block.get('thought', '')}\n"
+                                        elif isinstance(block, str):
+                                            extracted_content += block
+                                else:
+                                    extracted_content = str(msg.content or "")
+                                
+                                # Some models put thoughts in additional_kwargs or specific fields
+                                if not extracted_content.strip():
+                                    thought = (
+                                        msg.additional_kwargs.get("reasoning_content")
+                                        or msg.additional_kwargs.get("thought")
+                                        or msg.additional_kwargs.get("reasoning")
+                                    )
+                                    if thought:
+                                        debug_print(f"Found thought in additional_kwargs: {thought[:50]}...")
+                                        extracted_content = thought
+
                                 payload_to_send = {
                                     "role": "AI",
-                                    "content": msg.content or "",
+                                    "content": extracted_content.strip(),
                                 }
                                 if msg.tool_calls:
+                                    debug_print(f"Tool calls found: {[tc['name'] for tc in msg.tool_calls]}")
                                     payload_to_send["tool_calls"] = msg.tool_calls
 
                             # Tool execution results

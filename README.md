@@ -2,9 +2,10 @@
 
 ## Run the App
 
-1. python tools.py
-2. uvicorn main:app --port 8001 --reload
-3. npm run dev
+1. python scripts/db_setup.py # run script to setup example databases
+2. python tools.py
+3. uvicorn main:app --port 8001 --reload
+4. npm run dev
 
 ## System Description
 
@@ -43,5 +44,23 @@ Technologies:
    - when: Agent try pulling data from new table without knowing what fields are available
    - why: Agent blindly guessing column names
    - how: Rewrite system instructions to force "look before you leap" rule
+
+3. Distillation node
+   - what: Hitting TPM limit during complex queries
+   - when: Main model tries to process massive raw text payloads from tool results
+   - why: Tool payloads consume too many tokens, triggering rate limits on subsequent steps
+   - how: Introduce a distillation node to summarize and compress raw data before passing it back to the main model
+
+4. Database blueprint lookup
+   - what: AI blindly querying tables it doesn't know the structure of
+   - when: Attempting to pull columns from empty or newly created tables
+   - why: tool provided only returned table names, but left column names a mystery
+   - how: Upgraded to a full blueprint lookup tool that spits out both tables and their column schemas (with data types)
+
+5. Hard to debug AI reasoning
+   - what: Hard to debug or refine agent behaviors without knowing why the AI chose a tool
+   - when: Diagnosing why the AI made a wrong decision, loop, or empty lookup
+   - why: Pure API logs don't reveal the agent's internal logic and strategy
+   - how: Enforced a strict Chain of Thought rule requiring the AI to output its structural reasoning before calling tools, display it in the frontend, and use those outputs to refine system instructions
 
 Refer to [DEMO.md](DEMO.md) for example prompt and response.

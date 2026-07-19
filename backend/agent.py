@@ -1,14 +1,13 @@
-import os
-import asyncio
 from dotenv import load_dotenv
-
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 from langchain_core.messages import SystemMessage, ToolMessage, HumanMessage
 from langchain_groq import ChatGroq
 from langchain_mcp_adapters.client import MultiServerMCPClient
-
+import uuid
+# import os
+# import asyncio
 from helper.debug import debug_print
 
 load_dotenv()
@@ -48,19 +47,21 @@ You are AgentDesk, an autonomous, highly capable AI Agent designed to solve comp
 
 # Execution Rules & Guidelines
 1. Schema First, Query Second: When interacting with any database table or data source for the first time, you MUST check its structural layout first (e.g., using schema discovery, column listings, or metadata tools) before writing data queries. Never guess data fields or column names.
-2. Data Efficiency: Avoid wide generic dumps (like `SELECT *`). Explicitly request only the exact, targeted columns or fields required to answer the prompt.
+2. Data Efficiency: Avoid wide generic dumps. Explicitly request only the targeted fields required. Utilize filters, conditions, string manipulation and limits to preserve context space.
 3. Error Handling: If a tool returns an error, do not repeat the exact same request. Check the table or dataset structural info to diagnose the issue, adjust your syntax, and try a corrected approach.
-4. Information Sufficiency: If the message history already contains enough empirical data to fully satisfy the user's goal, answer directly without executing further tool routines.
+4. Information Sufficiency: If the message history already contains valid data samples or tool responses that satisfy the verification goal, stop executing tool routines immediately and finalize your answer.
 5. Exact Column Character Matching: When writing SQL queries, you MUST use the exact string casing, spaces, and punctuation discovered from the schema logs. If a column contains spaces, you MUST wrap it in double quotes exactly as defined. Never assume columns use snake_case or camelCase if the schema details state otherwise.
 6. Syntax Memory Resilience: If a query fails with a message indicating a column does not exist, do not invoke metadata or re-verify the schema. Meticulously review previous successful trace responses in your execution history, identify syntax discrepancies, adjust your syntax layout, and re-execute immediately.
 7. Complete Record Exhaustion: When querying a specific row, timestamp, or unique record index, you are strictly prohibited from making sequential, separate tool calls to fetch additional attributes from that same record layer later. You must extract ALL columns (`SELECT *`) for that specific target row on your very first query, or explicitly pull every available attribute associated with that record key at once. Gather full row contexts immediately to ensure all potential downstream analysis requirements are satisfied in a single round-trip.
 8. Platform-Agnostic Error Resolution: Do not assume a specific database system catalog layout when exploring schemas. Rely entirely on the auto-discovered tools and row previews (`LIMIT 1` or equivalent sample fetches) to determine structural names. If a query or tool execution returns a syntax or structural engine failure, you are forbidden from reverting to generic schema discovery loops. Inspect the active log history for structural layouts, apply the necessary identifier wrapping adjustments (e.g., handling spaces or casing rules dictated by the platform error message), and re-execute the corrected payload immediately on the next step.
+9. Testing Assertions: When explicitly commanded to 'test' or 'verify' an MCP tool framework, you are expected to execute a baseline sample request, confirm that the tools return structural payloads successfully, and immediately terminate the loop with a summary report. Do not attempt to cross-verify database counts or loop through row records unless explicitly instructed.
 
-# Analytical Protocol
-For every tool step, maintain a clear internal strategy:
-1. Analyze what the user is seeking and state your immediate data goal.
-2. Inspect the metadata or schemas of the plugged-in data sources to map out an accurate query plan.
-3. Execute your targeted query, observe the output payload, and verify if you have enough information to compile the final analysis.
+# Analytical Protocol (Mandatory Chain of Thought)
+Before executing ANY tool call, you MUST output an explicit, concise text reasoning block explaining your structural analysis. You must answer:
+1. What specific pieces of data are still missing to achieve the user's objective?
+2. Exactly why the chosen tool and query parameters are the most optimal way to extract that data.
+3. Verify that your planned parameters will not return empty or redundant payloads. Never execute empty lookups (like 'LIMIT 0') or duplicate queries.
+Only after writing this thought block are you allowed to invoke the tool parameters.
 
 # Tone & Style
 - Be objective, analytical, and highly precise when describing metrics and data relationships.
@@ -102,16 +103,30 @@ For every tool step, maintain a clear internal strategy:
 
             if len(content_text) > 200:
                 debug_print(f"Detected length of payload ({len(content_text)}) exceeding threshold, distilling raw payload into summary...")
-                payload_prompt = HumanMessage(content=f"Raw Data Payload to condense:\n{content_text}")
-                compression_prompt = [compression_instruction, payload_prompt]
-                summary = await compressor_llm.ainvoke(compression_prompt)
+
+                safe_input_text = content_text[:12000]
+                try:
+                    payload_prompt = HumanMessage(content=f"Raw Data Payload to condense:\n{safe_input_text}")
+                    compression_prompt = [compression_instruction, payload_prompt]
+                    summary = await compressor_llm.ainvoke(compression_prompt)
+                    if summary.content and summary.content.strip():
+                        final_content = f"[DISTILLED DATA SUMMARY]:\n{summary.content}"
+                        debug_print(f"Distillation successful. Summary length: {len(final_content)}")
+                    else:
+                        debug_print("Compressor LLM returned an empty summary content block. Falling back to safe programmatic truncation.")
+                        raise ValueError("Compressor LLM returned an empty summary content block.")
+                except Exception as e:
+                    debug_print(f"Distillation LLM failure or token block: {str(e)}. Falling back to safe programmatic truncation.")
+                    final_content = f"[TRUNCATED DATA PAYLOAD - SIZE LIMIT EXCEEDED]:\n{safe_input_text}\n... [Remaining data clipped to fit token window]"
+                
+                message_id = getattr(last_message, "id", None) or str(uuid.uuid4())
                 distilled_message = ToolMessage(
-                    content=f"[DISTILLED DATA SUMMARY]:\n{summary.content}" if summary.content.strip() else last_message.content,
-                    tool_call_id=last_message.tool_call_id,
-                    name=getattr(last_message, "name", "distill"),
-                    status=getattr(last_message, "status", "success"),
-                    id=getattr(last_message, "id", None)
-                )
+                        content=final_content,
+                        tool_call_id=last_message.tool_call_id,
+                        name=getattr(last_message, "name", "distill"),
+                        status=getattr(last_message, "status", "success"),
+                        id=message_id
+                    )
                 return {"messages": [distilled_message]}
         
             debug_print(f"Detected length of payload ({len(content_text)}) does not exceed threshold, distillation skipped.")
@@ -152,7 +167,7 @@ For every tool step, maintain a clear internal strategy:
     return compiled_agent
     
 async def run_agent_sandbox(user_prompt: str) -> str:
-    compiled_agent = compile_state_graph()
+    compiled_agent = await compile_state_graph()
     debug_print(f"Dispatching graph execution loop for instruction: '{user_prompt}'...\n")
     # Execute the runtime system
     initial_input = {"messages": [("user", user_prompt)]}
@@ -174,11 +189,11 @@ async def run_agent_sandbox(user_prompt: str) -> str:
 
     return final_state["messages"][-1].content
 
-if __name__ == "__main__":
-    generic_test_prompt = (
-        "Analyze the financial trajectory of the company represented in the database. "
-        "Calculate its key financial efficiency or profitability margins across all available "
-        "historical periods, and evaluate whether the qualitative operational narrative in the "
-        "internal corporate text records aligns with or contradicts these empirical trends."
-    )
-    asyncio.run(run_agent_sandbox(generic_test_prompt))
+# if __name__ == "__main__":
+#     generic_test_prompt = (
+#         "Analyze the financial trajectory of the company represented in the database. "
+#         "Calculate its key financial efficiency or profitability margins across all available "
+#         "historical periods, and evaluate whether the qualitative operational narrative in the "
+#         "internal corporate text records aligns with or contradicts these empirical trends."
+#     )
+#     asyncio.run(run_agent_sandbox(generic_test_prompt))
