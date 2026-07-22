@@ -1,6 +1,6 @@
 # AgentDesk
 
-![AgentDesk Preview](https://github.com/user-attachments/assets/b45e72c4-229b-4283-b608-278585c79112)
+<img width="934" height="566" alt="AgentDesk Workbench Preview" src="https://github.com/user-attachments/assets/760dd6ec-9326-4cf2-bbd0-09019db1d3da" />
 
 ## Run the App
 
@@ -45,6 +45,13 @@ Technologies:
 - TailwindCSS
 - Docker / Docker Compose
 - Unit Testing
+
+## Test the App
+
+1. Run pytest command:
+   ```bash
+   pytest
+   ```
 
 ## Challenges encountered / Enhancements made:
 

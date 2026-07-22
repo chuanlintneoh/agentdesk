@@ -1,5 +1,3 @@
-import pytest
-import os
 from tools import (
     get_database_blueprint,
     execute_sql_query,

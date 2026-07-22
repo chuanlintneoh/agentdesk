@@ -10,6 +10,7 @@ mcp = FastMCP("AgentDesk")
 DB_PATH = os.getenv("SQL_DB_PATH", "./data/agentdesk_sqlite.db")
 CHROMA_PATH = os.getenv("CHROMA_DB_PATH", "./data/agentdesk_chroma")
 
+# Rule of Thumb: If tool waits for something external (network, disk, database), use async def. If only uses CPU and memory, use def.
 @mcp.tool
 def get_database_blueprint() -> str:
     """
@@ -135,4 +136,3 @@ def retrieve_text_context(collection_name: str, semantic_query: str) -> str:
     except Exception as e:
         debug_print(f"Vector collection query runtime failure: {str(e)}")
         return f"Error executing vector query on '{collection_name}': {str(e)}"
-

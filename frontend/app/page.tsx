@@ -44,21 +44,6 @@ interface AgentStep {
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 120;
 
-const SUGGESTIONS = [
-  {
-    label: "Audit System Health",
-    text: "Perform a comprehensive health check of the system services and background workers.",
-  },
-  {
-    label: "DB Performance",
-    text: "Analyze the analytical database for performance bottlenecks and slow query patterns.",
-  },
-  {
-    label: "Trace User Journey",
-    text: "Generate a trace report for the latest multi-stage user authentication journey.",
-  },
-];
-
 function isNearPageBottom() {
   return (
     window.innerHeight + window.scrollY >=
@@ -323,24 +308,6 @@ export default function AgentWorkbench() {
               </div>
             </div>
           </form>
-
-          {/* Suggestions */}
-          {!loading && trace.length === 0 && (
-            <div className="flex flex-wrap gap-2.5 pt-2">
-              {SUGGESTIONS.map((s, i) => (
-                <button
-                  key={i}
-                  onClick={() => {
-                    setPrompt(s.text);
-                    handleExecute(undefined, s.text);
-                  }}
-                  className="px-3.5 py-1.5 rounded-full bg-zinc-900/40 border border-zinc-800 hover:bg-zinc-800/80 hover:border-zinc-700 text-zinc-400 hover:text-zinc-200 text-xs transition-all duration-200 cursor-pointer"
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
-          )}
         </section>
 
         {/* Trace Timeline */}

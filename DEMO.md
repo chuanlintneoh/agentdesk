@@ -1,16 +1,45 @@
-# Demo
+# Example 1: Movies Dataset
 
-## Example: Apple Inc.
+## Prompt:
 
-### Prompt:
+> Audit our internal movie databases by discovering the structural schemas of both the relational tables and the semantic vector collections, then extract a sample of metacritic reviews via SQL and cross-reference their themes by retrieving matching context blocks from the vector space.
+
+## Response:
+
+**Audit Summary – Relational & Semantic Layers**
+
+| Review ID | IMDb ID   | Metacritic Score | Review excerpt (first 80 chars)                                                                                                                      | Matching Vector‑Space Context (source / brief excerpt)                                                                                                                                                                        |
+| --------- | --------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0         | 242 998   | 4                | “Because so little of what occurs on‑screen either engages or entertains, there’s ample time for the boiler of your self‑respect …”                  | **12 Monkeys_0114746.txt – Chunk 30** – a rant about consumerism, TV overload and societal “system” that forces people to buy things or be labeled “mentally ill.”                                                            |
+| 1         | 1 335 975 | 5                | “Insufferably boring, culturally hegemonic, and profoundly ugly.”                                                                                    | **12 Angry Men_0118528.txt – Chunk 4** – character‑profile descriptions (age, occupation) that convey a bleak, oppressive atmosphere; also **84C MoPic_0096744.txt – Chunk 89** with gritty dialogue about military life.     |
+| 2         | 1 265 990 | 5                | “The Roommate has notched an unbelievable achievement; it makes the second‑rate ‘One Tree Hill’ seem like it was about something.”                   | **INT LOCAL DIVE BAR – Chunk 54** – chaotic bar scene with characters reacting wildly; **EXT BARN ROOF – Chunk 55** – tense, improvised work on a hazardous roof, echoing the “unbelievable achievement” tone.                |
+| 3         | 160 484   | 6                | “The only thing about this movie that will haunt you is its boggling ineptitude.”                                                                    | **84C MoPic_0096744.txt – Chunk 152** – lab‑post‑production setting with eerie, disorienting footage; **3 Idiots_1187043.txt – Chunk 363** – discussion of systemic pressure and mediocrity, matching the “ineptitude” theme. |
+| 4         | 2 120 120 | 8                | “There are legitimate excuses for going to see Pixels. Losing a bet, perhaps. Having a loved one held for ransom. Maybe a serious blow to the head.” | **2012_1190080.txt – Chunk 24** – surreal scene with a fake Mona Lisa, fire‑pit imagery and a mass‑suicide report, reflecting absurd, “legitimate excuses” for watching a chaotic film.                                       |
+
+**How the audit was performed**
+
+1. **Schema discovery** – Queried the internal SQL catalog (`get_database_blueprint`) to obtain exact table layouts for `reviews`, `movies`, `awards`, and `characters`.
+2. **Vector‑space discovery** – Listed available semantic collections (`list_vector_collections`) and identified the sole collection `movie_screenplays`.
+3. **Sample extraction** – Executed a focused SQL query (`SELECT id, text, score, imdbid FROM reviews WHERE score IS NOT NULL LIMIT 5`) to pull a representative set of Metacritic‑style reviews.
+4. **Theme cross‑reference** – For each review text, performed a semantic similarity lookup (`retrieve_text_context`) against `movie_screenplays`, retrieving the most relevant screenplay excerpts that share thematic language (e.g., consumerism, boredom, absurdity, ineptitude).
+
+**Observations**
+
+- **Thematic alignment** – Each review’s critical tone is echoed in screenplay excerpts that discuss similar concepts (consumer critique, oppressive environments, chaotic actions, systemic failure, absurd premises).
+- **Data completeness** – All required columns (`id`, `text`, `score`, `imdbid`) were obtained in a single SQL round‑trip, satisfying the “complete record exhaustion” rule.
+- **Vector relevance** – The semantic search returned context blocks with clear lexical overlap (e.g., “boring”, “ineptitude”, “consumer”, “absurd”), confirming that the vector collection is properly indexed for thematic retrieval.
+
+**Conclusion:** The internal movie database schema is well‑structured, and the `movie_screenplays` vector collection provides meaningful thematic cross‑references for Metacritic review content. This audit validates both relational and semantic layers and demonstrates their interoperability for content analysis.
+
+---
+
+# Example 2: Apple Inc. Dataset
+
+## Prompt:
 
 > Analyze the financial trajectory of the company represented in the database. Calculate its key financial efficiency or profitability margins across all available historical periods, and evaluate whether the qualitative operational narrative in the internal corporate text records aligns with or contradicts these empirical trends.
 
-### Response:
-
----
-
----
+## Response:
 
 **Financial Trajectory & Efficiency Analysis (Apple Inc.)**
 
@@ -23,7 +52,7 @@
 
 _All percentages are rounded to one decimal place._
 
-### Key Observations
+**Key Observations**
 
 | Metric               | Trend (2022 → 2025)                                                                                                                  |
 | :------------------- | :----------------------------------------------------------------------------------------------------------------------------------- |
@@ -37,11 +66,9 @@ _All percentages are rounded to one decimal place._
 
 Overall, Apple’s profitability and efficiency metrics have **improved or remained robust** across the four most recent fiscal years. Margins are trending upward, and returns on assets are rising, while the very high return on equity, though easing, stays well above industry norms.
 
----
+**Qualitative Narrative Alignment**
 
-## Qualitative Narrative Alignment
-
-### Extracted corporate‑text themes (2025 10‑K excerpts)
+**Extracted corporate‑text themes (2025 10‑K excerpts)**
 
 | Theme                              | Representative excerpt                                                                                                                                                                  |
 | :--------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -50,7 +77,7 @@ Overall, Apple’s profitability and efficiency metrics have **improved or remai
 | **Product & service innovation**   | “Significant announcements during fiscal year 2025 included … new product, service and software offerings.”                                                                             |
 | **Financial statement confidence** | “unqualified opinion … audited … consolidated statements of operations …”                                                                                                               |
 
-### Consistency check
+**Consistency check**
 
 | Narrative element                                                                                              | Does the data support it?                                                                                                                       |
 | :------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -61,15 +88,9 @@ Overall, Apple’s profitability and efficiency metrics have **improved or remai
 
 **Conclusion:** The qualitative operational narrative **aligns** with the empirical financial trends. The company’s statements about strong internal controls, ongoing innovation, and resilience under regulatory pressure are reflected in the steady‑to‑improving profitability margins and robust returns on assets/equity.
 
----
-
-### Final Take‑away
+**Final Take‑away**
 
 - **Financial health:** Apple exhibits a **positive trajectory**—revenues are growing, profitability margins are expanding, and asset efficiency is improving.
 - **Narrative coherence:** The internal corporate narrative emphasizes stability, effective governance, and product‑driven growth, which **matches** the quantitative evidence. No contradictions are observed between the qualitative statements and the financial data.
 
 ---
-
----
-
-### Live Graph Traces:

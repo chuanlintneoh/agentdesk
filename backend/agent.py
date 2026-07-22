@@ -19,7 +19,7 @@ async def compile_state_graph() -> CompiledStateGraph:
     client = MultiServerMCPClient({
         "core_utility_server": {
             "transport": "http",
-            "url": "http://localhost:8000/mcp",
+            "url": "http://localhost:8000/mcp/",
             "headers": {
                 "X-MCP-Token": mcp_token
             }
