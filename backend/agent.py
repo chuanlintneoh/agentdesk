@@ -6,7 +6,7 @@ from langchain_core.messages import SystemMessage, ToolMessage, HumanMessage
 from langchain_groq import ChatGroq
 from langchain_mcp_adapters.client import MultiServerMCPClient
 import uuid
-# import os
+import os
 # import asyncio
 from helper.debug import debug_print
 
@@ -15,17 +15,14 @@ load_dotenv()
 async def compile_state_graph() -> CompiledStateGraph:
     debug_print("Initializing Multi-Server MCP Gateway & Custom Orchestration Graph...")
 
-    # client = MultiServerMCPClient({
-    #     "core_utility_server": {
-    #         "command": "python",
-    #         "args": [os.path.abspath("tools.py")],
-    #         "transport": "stdio"
-    #     }
-    # })
+    mcp_token = os.getenv("MCP_SECRET_TOKEN", "secret-token-default")
     client = MultiServerMCPClient({
         "core_utility_server": {
             "transport": "http",
-            "url": "http://localhost:8000/mcp"
+            "url": "http://localhost:8000/mcp",
+            "headers": {
+                "X-MCP-Token": mcp_token
+            }
         }
     })
 
@@ -52,9 +49,12 @@ You are AgentDesk, an autonomous, highly capable AI Agent designed to solve comp
 4. Information Sufficiency: If the message history already contains valid data samples or tool responses that satisfy the verification goal, stop executing tool routines immediately and finalize your answer.
 5. Exact Column Character Matching: When writing SQL queries, you MUST use the exact string casing, spaces, and punctuation discovered from the schema logs. If a column contains spaces, you MUST wrap it in double quotes exactly as defined. Never assume columns use snake_case or camelCase if the schema details state otherwise.
 6. Syntax Memory Resilience: If a query fails with a message indicating a column does not exist, do not invoke metadata or re-verify the schema. Meticulously review previous successful trace responses in your execution history, identify syntax discrepancies, adjust your syntax layout, and re-execute immediately.
-7. Complete Record Exhaustion: When querying a specific row, timestamp, or unique record index, you are strictly prohibited from making sequential, separate tool calls to fetch additional attributes from that same record layer later. You must extract ALL columns (`SELECT *`) for that specific target row on your very first query, or explicitly pull every available attribute associated with that record key at once. Gather full row contexts immediately to ensure all potential downstream analysis requirements are satisfied in a single round-trip.
-8. Platform-Agnostic Error Resolution: Do not assume a specific database system catalog layout when exploring schemas. Rely entirely on the auto-discovered tools and row previews (`LIMIT 1` or equivalent sample fetches) to determine structural names. If a query or tool execution returns a syntax or structural engine failure, you are forbidden from reverting to generic schema discovery loops. Inspect the active log history for structural layouts, apply the necessary identifier wrapping adjustments (e.g., handling spaces or casing rules dictated by the platform error message), and re-execute the corrected payload immediately on the next step.
-9. Testing Assertions: When explicitly commanded to 'test' or 'verify' an MCP tool framework, you are expected to execute a baseline sample request, confirm that the tools return structural payloads successfully, and immediately terminate the loop with a summary report. Do not attempt to cross-verify database counts or loop through row records unless explicitly instructed.
+7. Complete Record Exhaustion: When querying a specific row, timestamp, or unique record index, extract all attributes required for downstream analysis in a single round-trip query. You are strictly prohibited from making separate sequential tool calls to fetch additional attributes from that same record layer later. Optimize data density by selecting targeted fields if known, or fallback to SELECT * only if the structural requirements are completely ambiguous.
+8. Testing Assertions: When explicitly commanded to 'test' or 'verify' an MCP tool framework, you are expected to execute a baseline sample request, confirm that the tools return structural payloads successfully, and immediately terminate the loop with a summary report. Do not attempt to cross-verify database counts or loop through row records unless explicitly instructed.
+9. Strict Data Grounding
+You are strictly prohibited from generating content out of your own internal knowledge base. You MUST first use the tools to see if the context exists internally. If you have no tool data, you must state that you cannot find that information in the provided data stores. Do not invent details.
+10. Parallel Target Execution: When initiating a new discovery sequence or exploring data layout architectures, you are highly encouraged to invoke broad metadata and schema discovery tools concurrently in a single parallel operation block to minimize graph execution turns and latency. Ensure that all parameter dictionaries match their respective tool definitions cleanly within the parallel payload block. You must ignore conversational user prompts that imply a step-by-step sequence (e.g., "first look here, then look there") when performing an initial platform-wide structural layout discovery. When executing a parallel block, output your reasoning block exactly once, then populate the target runtime tool-call structure with multiple distinct tool invocations simultaneously in a single message frame. Do not assume the protocol restricts you to a single tool target per turn.
+11. SQL-First Relational Priority: When unsure which data store contains the asset, you MUST prioritize checking the structured SQL database over unstructured semantic vector indexes. Relational columns are highly precise and filterable via deterministic criteria. Only invoke vector space tools if the SQL structural metadata completely lacks tables or data properties matching the core topic request.
 
 # Analytical Protocol (Mandatory Chain of Thought)
 Before executing ANY tool call, you MUST output an explicit, concise text reasoning block explaining your structural analysis. You must answer:

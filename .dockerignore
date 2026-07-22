@@ -1,5 +1,18 @@
 # Ignore local virtual environments (Docker builds its own internal environments)
 **/benv/
+**/venv/
+**/env/
+
+# Ignore Node modules
+**/node_modules/
+node_modules/
+frontend/node_modules/
+
+# Ignore Next.js build outputs and caches
+**/.next/
+.next/
+frontend/.next/
+**/out/
 
 # Ignore Python bytecode caches
 **/__pycache__/
@@ -7,4 +20,9 @@
 *.pyo
 *.pyd
 
+# Ignore environment variables and git
 .env
+.git/
+.gitignore
+
+**/.tmp/

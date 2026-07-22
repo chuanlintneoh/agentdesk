@@ -1,13 +1,26 @@
 # AgentDesk
 
-![App Screenshot](https://github.com/user-attachments/assets/b45e72c4-229b-4283-b608-278585c79112)
+![AgentDesk Preview](https://github.com/user-attachments/assets/b45e72c4-229b-4283-b608-278585c79112)
 
 ## Run the App
 
-1. python scripts/db_setup.py # run script to setup example databases
-2. python tools.py
-3. uvicorn main:app --port 8001 --reload
-4. npm run dev
+### Option A: Using Docker Compose (Recommended for Production & Local Testing)
+
+1. Copy `.env.example` to `.env` and configure your `GROQ_API_KEY`:
+   ```bash
+   cp .env.example .env
+   ```
+2. Build and run containers:
+   ```bash
+   docker compose up --build
+   ```
+3. Access the Frontend at `http://localhost:3000` and Backend API docs at `http://localhost:8000/docs`.
+
+### Option B: Local Development
+
+1. `python scripts/db_setup.py` # run script to setup example databases
+2. `uvicorn main:app --port 8000 --reload` (FastAPI backend with ASGI-mounted FastMCP server under `/mcp`)
+3. `npm run dev` (in the `frontend/` directory)
 
 ## System Description
 
@@ -30,7 +43,7 @@ Technologies:
 - JavaScript
 - HTML
 - TailwindCSS
-- Docker
+- Docker / Docker Compose
 - Unit Testing
 
 ## Challenges encountered / Enhancements made:

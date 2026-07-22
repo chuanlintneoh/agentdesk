@@ -1,9 +1,11 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends, Header
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from mock_agent import AgentState, AgenticOrchestrator
 from agent import compile_state_graph, run_agent_sandbox
+from tools import mcp
+import os
 import json
 import asyncio
 from langchain_core.messages import AIMessage, ToolMessage
@@ -14,6 +16,26 @@ app = FastAPI(
     title="AgentDesk Core API",
     description="Asynchronous backend orchestrating autonomous tool-calling loops."
 )
+
+def verify_mcp_token(x_mcp_token: str = Header(None)):
+    expected_token = os.getenv("MCP_SECRET_TOKEN", "secret-token-default")
+    if not x_mcp_token or x_mcp_token != expected_token:
+        raise HTTPException(status_code=403, detail="Invalid or missing X-MCP-Token header.")
+    return x_mcp_token
+
+mcp_asgi_app = mcp.http_app()
+
+@app.middleware("http")
+async def mcp_token_middleware(request: Request, call_next):
+    if request.url.path.startswith("/mcp"):
+        token = request.headers.get("x-mcp-token")
+        expected_token = os.getenv("MCP_SECRET_TOKEN", "secret-token-default")
+        if not token or token != expected_token:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=403, content={"detail": "Invalid or missing X-MCP-Token header."})
+    return await call_next(request)
+
+app.mount("/mcp", mcp_asgi_app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -87,56 +109,93 @@ async def stream_agent_loop(payload: QueryRequest):
             # Stream updates node-by-node out of graph lifecycle
             async for chunk in compiled_agent.astream(initial_input, stream_mode="updates"):
                 for node_name, node_update in chunk.items():
-                    if "messages" in node_update:
-                        for msg in node_update["messages"]:
-                            payload_to_send = {}
-                            
-                            # Model outputs or tool invocation triggers
-                            if isinstance(msg, AIMessage):
-                                extracted_content = ""
-                                if isinstance(msg.content, list):
-                                    debug_print(f"AIMessage content is a list with {len(msg.content)} blocks.")
-                                    for block in msg.content:
-                                        if isinstance(block, dict):
-                                            if block.get("type") == "text":
-                                                extracted_content += block.get("text", "")
-                                            elif block.get("type") == "thought": # Check for specific thought blocks
-                                                extracted_content += f"\n[THOUGHT]:\n{block.get('thought', '')}\n"
-                                        elif isinstance(block, str):
-                                            extracted_content += block
-                                else:
-                                    extracted_content = str(msg.content or "")
-                                
-                                # Some models put thoughts in additional_kwargs or specific fields
-                                if not extracted_content.strip():
-                                    thought = (
-                                        msg.additional_kwargs.get("reasoning_content")
-                                        or msg.additional_kwargs.get("thought")
-                                        or msg.additional_kwargs.get("reasoning")
-                                    )
-                                    if thought:
-                                        debug_print(f"Found thought in additional_kwargs: {thought[:50]}...")
-                                        extracted_content = thought
+                    if "messages" not in node_update:
+                        continue
 
-                                payload_to_send = {
-                                    "role": "AI",
-                                    "content": extracted_content.strip(),
-                                }
-                                if msg.tool_calls:
-                                    debug_print(f"Tool calls found: {[tc['name'] for tc in msg.tool_calls]}")
-                                    payload_to_send["tool_calls"] = msg.tool_calls
+                    # Split the node's message updates into model outputs and tool results
+                    ai_messages = [
+                        m for m in node_update["messages"]
+                        if isinstance(m, AIMessage)
+                    ]
+                    tool_messages = [
+                        m for m in node_update["messages"]
+                        if isinstance(m, ToolMessage)
+                    ]
 
-                            # Tool execution results
-                            elif isinstance(msg, ToolMessage):
-                                tool_identity = getattr(msg, "name", None) or getattr(msg, "tool_call_id", "System Node")
-                                payload_to_send = {
-                                    "role": f"Tool ({tool_identity})",
-                                    "content": msg.content or "[Empty content payload]"
-                                }
+                    # 1. Emit Agent/Model reasoning and pending tool-call intents
+                    for msg in ai_messages:
+                        extracted_content = ""
+                        if isinstance(msg.content, list):
+                            debug_print(f"AIMessage content is a list with {len(msg.content)} blocks.")
+                            for block in msg.content:
+                                if isinstance(block, dict):
+                                    if block.get("type") == "text":
+                                        extracted_content += block.get("text", "")
+                                    elif block.get("type") == "thought": # Check for specific thought blocks
+                                        extracted_content += f"\n[THOUGHT]:\n{block.get('thought', '')}\n"
+                                elif isinstance(block, str):
+                                    extracted_content += block
+                        else:
+                            extracted_content = str(msg.content or "")
 
-                            if payload_to_send:
-                                yield f"data: {json.dumps(payload_to_send)}\n\n"
-                                await asyncio.sleep(0.05)
+                        # Some models put thoughts in additional_kwargs or specific fields
+                        if not extracted_content.strip():
+                            thought = (
+                                msg.additional_kwargs.get("reasoning_content")
+                                or msg.additional_kwargs.get("thought")
+                                or msg.additional_kwargs.get("reasoning")
+                            )
+                            if thought:
+                                debug_print(f"Found thought in additional_kwargs: {thought[:50]}...")
+                                extracted_content = thought
+
+                        payload_to_send = {
+                            "node_name": node_name,
+                            "role": "AI",
+                            "content": extracted_content.strip(),
+                        }
+                        if msg.tool_calls:
+                            debug_print(f"Tool calls found: {[tc['name'] for tc in msg.tool_calls]}")
+                            payload_to_send["tool_calls"] = msg.tool_calls
+
+                        yield f"data: {json.dumps(payload_to_send)}\n\n"
+                        await asyncio.sleep(0.05)
+
+                    # 2. Batch all tool results emitted by a single node update into one event
+                    if tool_messages:
+                        tool_results = []
+                        for msg in tool_messages:
+                            tool_identity = getattr(msg, "name", None) or getattr(msg, "tool_call_id", "System Node")
+                            raw_content = msg.content or "[Empty content payload]"
+                            # Normalize structured (list-of-blocks) content to a plain string
+                            if isinstance(raw_content, list):
+                                normalized_parts = []
+                                for block in raw_content:
+                                    if isinstance(block, dict):
+                                        if block.get("type") == "text":
+                                            normalized_parts.append(block.get("text", ""))
+                                        elif "text" in block:
+                                            normalized_parts.append(str(block.get("text", "")))
+                                    elif isinstance(block, str):
+                                        normalized_parts.append(block)
+                                raw_content = "\n".join(p for p in normalized_parts if p) or "[Empty content payload]"
+                            elif not isinstance(raw_content, str):
+                                raw_content = str(raw_content)
+                            tool_results.append({
+                                "name": tool_identity,
+                                "content": raw_content
+                            })
+
+                        is_distill = node_name == "distill"
+                        payload_to_send = {
+                            "node_name": node_name,
+                            "role": "Distill" if is_distill else "Tools",
+                            "is_parallel": len(tool_results) > 1,
+                            "tool_results": tool_results,
+                        }
+
+                        yield f"data: {json.dumps(payload_to_send)}\n\n"
+                        await asyncio.sleep(0.05)
 
         except Exception as e:
             debug_print(f"Internal Graph Error: {str(e)}")

@@ -136,6 +136,3 @@ def retrieve_text_context(collection_name: str, semantic_query: str) -> str:
         debug_print(f"Vector collection query runtime failure: {str(e)}")
         return f"Error executing vector query on '{collection_name}': {str(e)}"
 
-if __name__ == "__main__":
-    # spin up the standard I/O communication gateway layer automatically
-    mcp.run(transport="http", port=8000)

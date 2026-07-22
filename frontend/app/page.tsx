@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import Markdown from "markdown-to-jsx";
 import {
@@ -28,10 +28,18 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+interface ToolResult {
+  name: string;
+  content: string;
+}
+
 interface AgentStep {
   role: string;
-  content: string;
+  content?: string;
+  node_name?: string;
   tool_calls?: any[];
+  is_parallel?: boolean;
+  tool_results?: ToolResult[];
 }
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 120;
@@ -122,7 +130,7 @@ export default function AgentWorkbench() {
   useEffect(() => {
     const checkHealth = async () => {
       try {
-        const res = await fetch("http://localhost:8001/health");
+        const res = await fetch("http://localhost:8000/health");
         setSystemReady(res.ok);
       } catch (err) {
         setSystemReady(false);
@@ -153,7 +161,7 @@ export default function AgentWorkbench() {
     stickToBottomRef.current = true;
 
     try {
-      const response = await fetch("http://localhost:8001/api/agent/stream", {
+      const response = await fetch("http://localhost:8000/api/agent/stream", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -196,7 +204,7 @@ export default function AgentWorkbench() {
         {
           role: "System Error",
           content:
-            "Could not reach the FastAPI backend. Ensure it is running at localhost:8001.",
+            "Could not reach the FastAPI backend. Ensure it is running at localhost:8000.",
         },
       ]);
     } finally {
@@ -244,7 +252,7 @@ export default function AgentWorkbench() {
           </div>
           <div className="flex items-center gap-3 h-10 px-4 rounded-full bg-zinc-900/50 border border-zinc-800/80 text-zinc-400 text-xs font-mono">
             <Layers className="size-3.5 text-blue-500" />
-            localhost:8001
+            localhost:8000
           </div>
         </header>
 
@@ -260,12 +268,19 @@ export default function AgentWorkbench() {
                 Session Console
               </span>
             </div>
-            <Input
+            <Textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleExecute(undefined, prompt);
+                }
+              }}
               placeholder="Enter a multi-step analytical command..."
               disabled={loading}
-              className="w-full bg-transparent border-0 ring-0 focus-visible:ring-0 text-lg py-6 h-auto px-4 placeholder:text-zinc-600 font-default"
+              rows={6}
+              className="w-full bg-transparent border-0 ring-0 focus-visible:ring-0 text-lg leading-relaxed py-4 px-4 placeholder:text-zinc-600 font-default resize-none overflow-y-auto max-h-21"
             />
             <div className="flex items-center justify-between p-3 bg-zinc-900/20 rounded-xl mt-1">
               <div className="flex items-center gap-2 text-[10px] text-zinc-600 font-mono px-2">
@@ -273,6 +288,11 @@ export default function AgentWorkbench() {
                   ENTER
                 </span>{" "}
                 to execute
+                <span className="mx-1 text-zinc-700">·</span>
+                <span className="bg-zinc-800 px-1 rounded text-zinc-400">
+                  SHIFT+ENTER
+                </span>{" "}
+                for newline
               </div>
               <div className="flex gap-2">
                 <Button
@@ -359,6 +379,12 @@ export default function AgentWorkbench() {
 
             {trace.map((step, idx) => {
               const isTool = step.tool_calls && step.tool_calls.length > 0;
+              const isToolResult =
+                step.tool_results && step.tool_results.length > 0;
+              const isParallel =
+                step.is_parallel ||
+                (isToolResult && step.tool_results!.length > 1) ||
+                (isTool && (step.tool_calls?.length ?? 0) > 1);
               const isError = step.role.toLowerCase().includes("error");
 
               let Icon = Cpu;
@@ -366,8 +392,8 @@ export default function AgentWorkbench() {
               let iconBg = "bg-blue-950/30";
               let iconBorder = "border-blue-500/30";
 
-              if (isTool) {
-                Icon = Wrench;
+              if (isToolResult || isTool) {
+                Icon = isParallel ? Layers : Wrench;
                 iconColor = "text-amber-400";
                 iconBg = "bg-amber-950/30";
                 iconBorder = "border-amber-500/30";
@@ -411,11 +437,25 @@ export default function AgentWorkbench() {
                           Node {idx + 1}
                         </span>
                         <h3 className="text-sm font-semibold text-zinc-300 capitalize">
-                          {step.role === "User" ? "Your Request" : step.role}
+                          {step.role === "User"
+                            ? "Your Request"
+                            : isParallel
+                              ? "Parallel Tool Execution"
+                              : step.role}
                         </h3>
                       </div>
                       <div className="flex items-center gap-3">
-                        {isTool && (
+                        {isParallel && (
+                          <Badge
+                            variant="secondary"
+                            className="bg-amber-500/10 text-amber-500 border-amber-500/20 text-[10px] font-mono hover:bg-amber-500/20"
+                          >
+                            {step.tool_calls
+                              ? `Invoke: ${step.tool_calls.length} tools`
+                              : `${step.tool_results!.length} tools`}
+                          </Badge>
+                        )}
+                        {isTool && !isParallel && (
                           <Badge
                             variant="secondary"
                             className="bg-amber-500/10 text-amber-500 border-amber-500/20 text-[10px] font-mono hover:bg-amber-500/20"
@@ -443,6 +483,8 @@ export default function AgentWorkbench() {
                                   <Markdown>{step.content as string}</Markdown>
                                 </div>
                               )}
+
+                              {/* Pending/Invocation: render every parallel tool call */}
                               {hasToolCalls && (
                                 <div
                                   className={cn(
@@ -455,20 +497,74 @@ export default function AgentWorkbench() {
                                     <Code className="size-3" />
                                     {hasContent
                                       ? "Parallel Invocation / Tool Parameters"
-                                      : "Tool Parameters"}
+                                      : isParallel
+                                        ? "Parallel Tool Invocations"
+                                        : "Tool Parameters"}
                                   </div>
-                                  <pre className="p-3.5 bg-zinc-950 rounded-xl border border-zinc-800/60 text-[13px] font-mono text-amber-300/90 overflow-x-auto shadow-inner">
-                                    {JSON.stringify(
-                                      step.tool_calls?.[0]?.args,
-                                      null,
-                                      2,
+                                  <div className="grid gap-2 sm:grid-cols-2">
+                                    {(step.tool_calls ?? []).map(
+                                      (tc: any, ti: number) => (
+                                        <div
+                                          key={ti}
+                                          className="rounded-xl border border-zinc-800/60 bg-zinc-950 overflow-hidden shadow-inner"
+                                        >
+                                          <div className="px-3 py-1.5 bg-zinc-900/70 border-b border-zinc-800/60 text-[11px] font-mono text-amber-400/90 flex items-center justify-between">
+                                            <span>{tc?.name}</span>
+                                            <span className="text-zinc-600">
+                                              #{ti + 1}
+                                            </span>
+                                          </div>
+                                          <pre className="p-3 text-[12.5px] font-mono text-amber-300/90 overflow-x-auto">
+                                            {JSON.stringify(tc?.args, null, 2)}
+                                          </pre>
+                                        </div>
+                                      ),
                                     )}
-                                  </pre>
+                                  </div>
                                 </div>
                               )}
                             </div>
                           );
                         })()}
+
+                        {/* Batched Tool Results (parallel execution outputs) */}
+                        {isToolResult && (
+                          <div className="space-y-2 pt-4 border-t border-zinc-800/50">
+                            <div className="flex items-center gap-2 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                              <Layers className="size-3" />
+                              {isParallel
+                                ? "Parallel Tool Results"
+                                : "Tool Result"}
+                            </div>
+                            <div
+                              className={cn(
+                                "grid gap-2",
+                                step.tool_results!.length > 1
+                                  ? "sm:grid-cols-2"
+                                  : "grid-cols-1",
+                              )}
+                            >
+                              {step.tool_results!.map((tr, ri) => (
+                                <div
+                                  key={ri}
+                                  className="rounded-xl border border-zinc-800/60 bg-zinc-950 overflow-hidden shadow-inner"
+                                >
+                                  <div className="px-3 py-1.5 bg-zinc-900/70 border-b border-zinc-800/60 text-[11px] font-mono text-emerald-400/90 flex items-center justify-between">
+                                    <span>{tr.name}</span>
+                                    <span className="text-zinc-600">
+                                      #{ri + 1}
+                                    </span>
+                                  </div>
+                                  <pre className="p-3 text-[12.5px] font-mono text-emerald-300/90 overflow-x-auto max-h-[400px]">
+                                    {typeof tr.content === "string"
+                                      ? tr.content
+                                      : JSON.stringify(tr.content, null, 2)}
+                                  </pre>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
                         {/* Data Payloads (Objects/Arrays) */}
                         {step.content && typeof step.content !== "string" && (
@@ -485,6 +581,7 @@ export default function AgentWorkbench() {
 
                         {/* Fallback */}
                         {!step.content &&
+                          !isToolResult &&
                           (!step.tool_calls ||
                             step.tool_calls.length === 0) && (
                             <div className="flex items-center gap-2 text-zinc-600 italic py-2">

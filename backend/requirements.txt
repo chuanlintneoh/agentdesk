@@ -7,6 +7,7 @@ langgraph
 langchain
 langchain-mcp-adapters
 langchain-groq
+pytest
 
 # Script dependencies
 yfinance
