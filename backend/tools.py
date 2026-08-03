@@ -2,6 +2,7 @@ import os
 import sqlite3
 import json
 import chromadb
+import requests
 from fastmcp import FastMCP
 from helper.debug import debug_print
 
@@ -136,3 +137,30 @@ def retrieve_text_context(collection_name: str, semantic_query: str) -> str:
     except Exception as e:
         debug_print(f"Vector collection query runtime failure: {str(e)}")
         return f"Error executing vector query on '{collection_name}': {str(e)}"
+
+@mcp.tool
+def fetch_external_api_data(url: str, params_json: str = None) -> str:
+    """
+    Fetches real-time market data, travel schedules, or external API endpoints.
+    Use this to pull live contextual information from external web services.
+    
+    Parameters:
+    - url: The absolute HTTP target URL address.
+    - params_json: Optional JSON string representing query parameters.
+    """
+    debug_print(f"[MCP Execution] External API Fetch triggered: {url}")
+    try:
+        # Prevent accessing internal cluster infrastructure loops (SSRF protection)
+        if "localhost" in url or "127.0.0.1" in url or "backend" in url:
+            return "Security Restriction: Access to internal network routes is blocked."
+            
+        params = json.loads(params_json) if params_json else None
+        response = requests.get(url, params=params, timeout=5)
+        
+        if response.status_code != 200:
+            return f"External service responded with HTTP status code: {response.status_code}"
+            
+        return response.text
+    except Exception as e:
+        debug_print(f"Network fetch error: {str(e)}")
+        return f"Network fetch error: {str(e)}"

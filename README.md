@@ -1,6 +1,7 @@
 # AgentDesk
 
-<img width="934" height="566" alt="AgentDesk Workbench Preview" src="https://github.com/user-attachments/assets/760dd6ec-9326-4cf2-bbd0-09019db1d3da" />
+<img width="1365" height="592" alt="Streamlit Dashboard" src="https://github.com/user-attachments/assets/abfd3ffc-53c5-47ac-9ae7-2bb77b9275f2" />
+<img width="934" height="566" alt="NextJS Frontend" src="https://github.com/user-attachments/assets/760dd6ec-9326-4cf2-bbd0-09019db1d3da" />
 
 ## Run the App
 
@@ -10,11 +11,30 @@
    ```bash
    cp .env.example .env
    ```
-2. Build and run containers:
-   ```bash
-   docker compose up --build
-   ```
-3. Access the Frontend at `http://localhost:3000` and Backend API docs at `http://localhost:8000/docs`.
+2. Build and run containers (Select one):
+   - Backend server only
+     ```bash
+     docker compose up --build
+     ```
+   - Backend server and Streamlit dashboard
+     ```bash
+     docker compose --profile streamlit up --build
+     ```
+   - Backend server and NextJS frontend
+     ```bash
+     docker compose --profile nextjs up --build
+     ```
+   - Backend server, NextJS frontend and Streamlit dashboard
+     ```bash
+     docker compose --profile all up --build
+     ```
+3. Access:
+   - Server documentations:
+     `http://localhost:8000/docs`
+   - NextJS frontend:
+     `http://localhost:3000`
+   - Streamlit dashboard:
+     `http://localhost:8501`
 
 ### Option B: Local Development
 
@@ -43,17 +63,26 @@ Technologies:
 - JavaScript
 - HTML
 - TailwindCSS
+- Streamlit
 - Docker / Docker Compose
 - Unit Testing
 
-## Test the App
+## Run Test Scripts
 
-1. Run pytest command:
-   ```bash
-   pytest
-   ```
+- Backend Server
+  ```bash
+  cd backend/
+  source benv/Scripts/activate
+  pytest
+  ```
+- Streamlit Dashboard
+  ```bash
+  cd dashboard/
+  source denv/Scripts/activate
+  pytest
+  ```
 
-## Challenges encountered / Enhancements made:
+## Challenges Encountered & Enhancements Made
 
 1. Token limit system crash
    - what: Frequent hit of rate limit exceeded error when answering a complex multi-step query

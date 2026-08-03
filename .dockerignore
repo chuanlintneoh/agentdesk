@@ -1,5 +1,6 @@
 # Ignore local virtual environments (Docker builds its own internal environments)
 **/benv/
+**/denv/
 **/venv/
 **/env/
 

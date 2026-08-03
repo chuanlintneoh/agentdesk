@@ -2,7 +2,8 @@ from tools import (
     get_database_blueprint,
     execute_sql_query,
     list_vector_collections,
-    retrieve_text_context
+    retrieve_text_context,
+    fetch_external_api_data
 )
 
 def test_get_database_blueprint():
@@ -19,10 +20,29 @@ def test_execute_sql_query_security():
         "UPDATE users SET name = 'test';",
         "INSERT INTO users (name) VALUES ('test');",
         "ALTER TABLE users ADD COLUMN age INT;",
-        "CREATE TABLE test (id INT);"
+        "CREATE TABLE test (id INT);",
+        # Obfuscated / Case variants
+        "dRoP TABLE users;",
+        "DELETE/*comment*/FROM users;",
+        "INSERT\nINTO users (name) VALUES ('test');",
+        # Nested / Semicolon injection
+        "SELECT 1; DROP TABLE users;",
+        "SELECT 1-- DROP TABLE users"
     ]
     for query in forbidden_queries:
         res = execute_sql_query(query)
+        assert "Security Restriction" in res
+
+def test_fetch_external_api_data_security():
+    # Test SSRF protection
+    forbidden_urls = [
+        "http://localhost:8000/health",
+        "http://127.0.0.1/health",
+        "http://backend:8000/health",
+        "https://127.0.0.1.nip.io", # Hostname that resolves to 127.0.0.1
+    ]
+    for url in forbidden_urls:
+        res = fetch_external_api_data(url)
         assert "Security Restriction" in res
 
 def test_execute_sql_query_select():

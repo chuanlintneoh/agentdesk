@@ -23,10 +23,28 @@ services:
       dockerfile: frontend/Dockerfile
     container_name: agentdesk-frontend
     restart: unless-stopped
+    profiles: ["nextjs", "all"]
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_BACKEND_API_URL=http://localhost:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - agentdesk-net
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    container_name: agentdesk-dashboard
+    restart: unless-stopped
+    profiles: ["streamlit", "all"]
+    ports:
+      - "8501:8501"
+    environment:
+      - BACKEND_API_URL=http://backend:8000
     depends_on:
       backend:
         condition: service_healthy

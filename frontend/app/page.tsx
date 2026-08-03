@@ -42,6 +42,8 @@ interface AgentStep {
   tool_results?: ToolResult[];
 }
 
+const fastapiUrl =
+  process.env.NEXT_PUBLIC_BACKEND_API_URL || "http://localhost:8000";
 const SCROLL_BOTTOM_THRESHOLD_PX = 120;
 
 function isNearPageBottom() {
@@ -115,7 +117,7 @@ export default function AgentWorkbench() {
   useEffect(() => {
     const checkHealth = async () => {
       try {
-        const res = await fetch("http://localhost:8000/health");
+        const res = await fetch(`${fastapiUrl}/health`);
         setSystemReady(res.ok);
       } catch (err) {
         setSystemReady(false);
@@ -146,7 +148,7 @@ export default function AgentWorkbench() {
     stickToBottomRef.current = true;
 
     try {
-      const response = await fetch("http://localhost:8000/api/agent/stream", {
+      const response = await fetch(`${fastapiUrl}/api/agent/stream`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -188,8 +190,7 @@ export default function AgentWorkbench() {
         ...prev,
         {
           role: "System Error",
-          content:
-            "Could not reach the FastAPI backend. Ensure it is running at localhost:8000.",
+          content: `Could not reach the FastAPI backend. Ensure it is running at \`${fastapiUrl}\`.`,
         },
       ]);
     } finally {
@@ -237,7 +238,7 @@ export default function AgentWorkbench() {
           </div>
           <div className="flex items-center gap-3 h-10 px-4 rounded-full bg-zinc-900/50 border border-zinc-800/80 text-zinc-400 text-xs font-mono">
             <Layers className="size-3.5 text-blue-500" />
-            localhost:8000
+            {fastapiUrl.replace("http://", "").replace("https://", "")}
           </div>
         </header>
 
