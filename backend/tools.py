@@ -139,14 +139,14 @@ def retrieve_text_context(collection_name: str, semantic_query: str) -> str:
         return f"Error executing vector query on '{collection_name}': {str(e)}"
 
 @mcp.tool
-def fetch_external_api_data(url: str, params_json: str = None) -> str:
+def fetch_external_api_data(url: str, params_json: str = "") -> str:
     """
     Fetches real-time market data, travel schedules, or external API endpoints.
     Use this to pull live contextual information from external web services.
     
     Parameters:
     - url: The absolute HTTP target URL address.
-    - params_json: Optional JSON string representing query parameters.
+    - params_json: Optional JSON string representing query parameters (defaults to empty string "").
     """
     debug_print(f"[MCP Execution] External API Fetch triggered: {url}")
     try:
