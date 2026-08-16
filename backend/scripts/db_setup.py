@@ -11,14 +11,18 @@ if __name__ == "__main__":
     os.makedirs("data", exist_ok=True)
 
     TICKER = "AAPL"
-    # option = "A"
-    option = "B"
+    option = "A"
 
     if option == "A":
+        setup_finance_sql(ticker=TICKER, db=f"./data/corporate{TICKER}_sqlite.db")
+        setup_corporate_vectordb(ticker=TICKER, db=f"./data/corporate{TICKER}_chroma")
+        setup_movies_sql(db="./data/movies_sqlite.db")
+        # setup_movie_vectordb(db="./data/movies_chroma")
+    elif option == "B":
         setup_finance_sql(ticker=TICKER, db="./data/agentdesk_sqlite.db")
         setup_corporate_vectordb(ticker=TICKER, db="./data/agentdesk_chroma")
-    elif option == "B":
+    elif option == "C":
         setup_movies_sql(db="./data/agentdesk_sqlite.db")
         setup_movie_vectordb(db="./data/agentdesk_chroma")
     else:
-        debug_print("Invalid option selected. Please choose 'A' or 'B'.")
+        debug_print("Invalid option selected. Please choose 'A' or 'B' or 'C'.")

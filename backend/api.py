@@ -68,10 +68,17 @@ def register_agent_routes(api: FastAPI):
             try:
                 # Initialize compiled graph
                 compiled_agent = await compile_state_graph()
-                initial_input = {"messages": [("user", payload.prompt)]}
+                initial_input = {
+                    "messages": [("user", payload.prompt)],
+                    "iteration_count": 0
+                }
 
                 # Stream updates node-by-node out of graph lifecycle
-                async for chunk in compiled_agent.astream(initial_input, stream_mode="updates"):
+                async for chunk in compiled_agent.astream(
+                    initial_input,
+                    stream_mode="updates",
+                    config={"recursion_limit": 25}
+                ):
                     # TODO: Add circuit breaker
                     for node_name, node_update in chunk.items():
                         if "messages" not in node_update:

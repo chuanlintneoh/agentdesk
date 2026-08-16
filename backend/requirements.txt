@@ -8,6 +8,7 @@ langchain
 langchain-mcp-adapters
 pytest-asyncio
 langchain-groq
+sentence-transformers
 pytest
 
 # Script dependencies

@@ -40,7 +40,15 @@
 
 1. `python scripts/db_setup.py` # run script to setup example databases
 2. `uvicorn main:app --port 8000 --reload` (FastAPI backend with ASGI-mounted FastMCP server under `/mcp`)
-3. `npm run dev` (in the `frontend/` directory)
+3. Run frontend (Select at least one):
+   - Streamlit dashboard (in the `dashboard/` directory)
+     ```bash
+     streamlit run app.py
+     ```
+   - NextJS frontend (in the `frontend/` directory)
+     ```bash
+     npm run dev
+     ```
 
 ## System Description
 

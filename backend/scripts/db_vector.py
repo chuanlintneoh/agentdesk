@@ -1,4 +1,5 @@
-# Download official annual disclosure (10-K report) directly from the SEC EDGAR system and save into local txt file for persistence
+# Corporate: Download official annual disclosure (10-K report) directly from the SEC EDGAR system and save into local txt file for persistence
+# Movie: Parse raw screenplay text files from Kaggle dataset, chunk dialogues, and persist into Chroma vector store
 import os
 import sys
 

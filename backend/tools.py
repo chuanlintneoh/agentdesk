@@ -1,15 +1,23 @@
 import os
 import sqlite3
 import json
+from typing import Optional
 import chromadb
+from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 import requests
 from fastmcp import FastMCP
 from helper.debug import debug_print
 
 mcp = FastMCP("AgentDesk")
 
-DB_PATH = os.getenv("SQL_DB_PATH", "./data/agentdesk_sqlite.db")
-CHROMA_PATH = os.getenv("CHROMA_DB_PATH", "./data/agentdesk_chroma")
+# DB_PATH = os.getenv("SQL_DB_PATH", "./data/agentdesk_sqlite.db")
+# CHROMA_PATH = os.getenv("CHROMA_DB_PATH", "./data/agentdesk_chroma")
+
+# DB_PATH = os.getenv("SQL_DB_PATH", "corporateAAPL_sqlite.db")
+# CHROMA_PATH = os.getenv("CHROMA_DB_PATH", "./data/corporateAAPL_chroma")
+
+DB_PATH = os.getenv("SQL_DB_PATH", "./data/movies_sqlite.db")
+CHROMA_PATH = os.getenv("CHROMA_DB_PATH", "./data/movies_chroma")
 
 # Rule of Thumb: If tool waits for something external (network, disk, database), use async def. If only uses CPU and memory, use def.
 @mcp.tool
@@ -96,28 +104,41 @@ def list_vector_collections() -> str:
         debug_print(f"Failed to list vector collections: {str(e)}")
         return f"Error listing vector collections: {str(e)}"
 
+cpu_ef = SentenceTransformerEmbeddingFunction(
+    model_name="all-MiniLM-L6-v2",
+    device="cpu"
+)
 @mcp.tool
-def retrieve_text_context(collection_name: str, semantic_query: str) -> str:
+def retrieve_text_context(
+    collection_name: str,
+    semantic_query: str,
+    source_filter: Optional[str] = None
+) -> str:
     """
     Performs a semantic similarity search inside a specific vector collection.
 
     Parameters:
     - collection_name: The exact name of the collection to search.
     - semantic_query: The natural language question or context theme to search for.
+    - source_filter: Optional keyword/filename substring to restrict results to specific sources.
     """
     debug_print(f"[MCP Execution] Retrieve text context triggered: {semantic_query}")
     try:
         client = chromadb.PersistentClient(path=CHROMA_PATH)
         try:
-            collection = client.get_collection(name=collection_name.strip())
+            collection = client.get_collection(
+                name=collection_name.strip(),
+                embedding_function=cpu_ef
+            )
         except Exception:
             return f"Error: The vector collection '{collection_name}' does not exist. Use list_vector_collections to see valid options."
 
+        query_kwargs = {"query_texts": [semantic_query], "n_results": 3}
+        if source_filter and source_filter.strip():
+            query_kwargs["where"] = {"source": {"$contains": source_filter.strip()}}
+        
         # Querying the vector space database
-        results = collection.query(
-            query_texts=[semantic_query],
-            n_results=3
-        )
+        results = collection.query(**query_kwargs)
         
         extracted_text = []
         if results and 'documents' in results and results['documents'] and len(results['documents'][0]) > 0:
@@ -138,29 +159,29 @@ def retrieve_text_context(collection_name: str, semantic_query: str) -> str:
         debug_print(f"Vector collection query runtime failure: {str(e)}")
         return f"Error executing vector query on '{collection_name}': {str(e)}"
 
-@mcp.tool
-def fetch_external_api_data(url: str, params_json: str = "") -> str:
-    """
-    Fetches real-time market data, travel schedules, or external API endpoints.
-    Use this to pull live contextual information from external web services.
+# @mcp.tool
+# def fetch_external_api_data(url: str, params_json: str = "") -> str:
+#     """
+#     Fetches real-time market data, travel schedules, or external API endpoints.
+#     Use this to pull live contextual information from external web services.
     
-    Parameters:
-    - url: The absolute HTTP target URL address.
-    - params_json: Optional JSON string representing query parameters (defaults to empty string "").
-    """
-    debug_print(f"[MCP Execution] External API Fetch triggered: {url}")
-    try:
-        # Prevent accessing internal cluster infrastructure loops (SSRF protection)
-        if "localhost" in url or "127.0.0.1" in url or "backend" in url:
-            return "Security Restriction: Access to internal network routes is blocked."
+#     Parameters:
+#     - url: The absolute HTTP target URL address.
+#     - params_json: Optional JSON string representing query parameters (defaults to empty string "").
+#     """
+#     debug_print(f"[MCP Execution] External API Fetch triggered: {url}")
+#     try:
+#         # Prevent accessing internal cluster infrastructure loops (SSRF protection)
+#         if "localhost" in url or "127.0.0.1" in url or "backend" in url:
+#             return "Security Restriction: Access to internal network routes is blocked."
             
-        params = json.loads(params_json) if params_json else None
-        response = requests.get(url, params=params, timeout=5)
+#         params = json.loads(params_json) if params_json else None
+#         response = requests.get(url, params=params, timeout=5)
         
-        if response.status_code != 200:
-            return f"External service responded with HTTP status code: {response.status_code}"
+#         if response.status_code != 200:
+#             return f"External service responded with HTTP status code: {response.status_code}"
             
-        return response.text
-    except Exception as e:
-        debug_print(f"Network fetch error: {str(e)}")
-        return f"Network fetch error: {str(e)}"
+#         return response.text
+#     except Exception as e:
+#         debug_print(f"Network fetch error: {str(e)}")
+#         return f"Network fetch error: {str(e)}"

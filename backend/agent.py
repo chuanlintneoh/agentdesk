@@ -2,15 +2,33 @@ from dotenv import load_dotenv
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
-from langchain_core.messages import SystemMessage, ToolMessage, HumanMessage
+from langchain_core.messages import SystemMessage, ToolMessage, HumanMessage, AIMessage
 from langchain_groq import ChatGroq
 from langchain_mcp_adapters.client import MultiServerMCPClient
+import tiktoken
+from typing import Any, Literal
 import uuid
 import os
 # import asyncio
 from helper.debug import debug_print
 
 load_dotenv()
+
+# intercept when agent hits this number of tool invocations
+MAX_TOOL_ITERATIONS = int(os.getenv("MAX_TOOL_ITERATIONS", 8))
+# send raw payload to distillation if it exceeds this token count
+MAX_PAYLOAD_LENGTH = int(os.getenv("MAX_PAYLOAD_LENGTH", 200))
+# length of raw payload to send to distillation
+MAX_DISTILLATION_LENGTH = int(os.getenv("MAX_DISTILLATION_LENGTH", 12000))
+# fallback truncation length if distillation fails
+# MANUAL_TRUNCATION_LENGTH = int(os.getenv("MANUAL_TRUNCATION_LENGTH", 6000))
+
+tokenizer = tiktoken.get_encoding("cl100k_base")
+def count_tokens(text: str) -> int:
+    return len(tokenizer.encode(text))
+
+class AgentState(MessagesState):
+    iteration_count: int = 0
 
 async def compile_state_graph() -> CompiledStateGraph:
     debug_print("Initializing Multi-Server MCP Gateway & Custom Orchestration Graph...")
@@ -78,18 +96,23 @@ Only after writing this thought block are you allowed to invoke the tool paramet
     # Handled inside StateGraph initialization in step 6
 
     # 3. Define model node
-    async def call_model(state: MessagesState):
+    async def call_model(state: AgentState) -> dict[str, Any]:
         # Prepend system rules to the active conversation history matrix
         messages = [system_instruction] + state["messages"]
         debug_print(f"Calling model with last message: {state['messages'][-1].content[:100]}...")
         response = await llm_with_tools.ainvoke(messages)
+        current_count = state.get("iteration_count", 0)
+        next_count = current_count + 1 if response.tool_calls else current_count
         # Return updates to append cleanly back into the centralized graph state
         # Case 1: AIMessage with empty `content` but populated data in `tool_calls` > Calling tool
         # Case 2: AIMessage with populated data in `content` and `tool_calls` > CoT execution
         # Case 3: AIMessage with populated data in `content` but empty `tool_calls` > Direct response
-        return {"messages": [response]}
+        return {
+            "messages": [response],
+            "iteration_count": next_count
+        }
     
-    async def distill_tool_response(state: MessagesState):
+    async def distill_tool_response(state: AgentState) -> dict[str, Any]:
         last_message = state["messages"][-1]
 
         # Intercept if the newly returned payload is too heavy
@@ -102,17 +125,19 @@ Only after writing this thought block are you allowed to invoke the tool paramet
                 # Fallback to standard string translation
                 content_text = str(last_message.content)
 
-            if len(content_text) > 200:
-                debug_print(f"Detected length of payload ({len(content_text)}) exceeding threshold, distilling raw payload into summary...")
+            token_count = count_tokens(content_text)
+            if token_count > MAX_PAYLOAD_LENGTH:
+                debug_print(f"Detected token count of payload ({token_count}) exceeding threshold, distilling raw payload into summary...")
 
-                safe_input_text = content_text[:12000]
+                safe_input_text = content_text[:MAX_DISTILLATION_LENGTH]
                 try:
                     payload_prompt = HumanMessage(content=f"Raw Data Payload to condense:\n{safe_input_text}")
                     compression_prompt = [compression_instruction, payload_prompt]
                     summary = await compressor_llm.ainvoke(compression_prompt)
-                    if summary.content and summary.content.strip():
-                        final_content = f"[DISTILLED DATA SUMMARY]:\n{summary.content}"
-                        debug_print(f"Distillation successful. Summary length: {len(final_content)}")
+                    extracted_summary = summary.content or summary.additional_kwargs.get("thought", "")
+                    if extracted_summary and extracted_summary.strip():
+                        final_content = f"[DISTILLED DATA SUMMARY]:\n{extracted_summary.strip()}"
+                        debug_print(f"Distillation successful. Summary token count: {count_tokens(final_content)}")
                     else:
                         debug_print("Compressor LLM returned an empty summary content block. Falling back to safe programmatic truncation.")
                         raise ValueError("Compressor LLM returned an empty summary content block.")
@@ -130,17 +155,39 @@ Only after writing this thought block are you allowed to invoke the tool paramet
                     )
                 return {"messages": [distilled_message]}
         
-            debug_print(f"Detected length of payload ({len(content_text)}) does not exceed threshold, distillation skipped.")
+            debug_print(f"Detected token count of payload ({token_count}) does not exceed threshold, distillation skipped.")
         return {"messages": []}
+
+    async def circuit_breaker(state: AgentState) -> dict[str, Any]:
+        fallback_prompt = SystemMessage(
+            content=(
+                f"The tool execution threshold ({MAX_TOOL_ITERATIONS} rounds) has been reached. "
+                "Synthesize a final response based solely on the data retrieved so far. "
+                "Clearly list what was verified and mention what remains incomplete."
+            )
+        )
+        
+        cleaned_history = list(state["messages"])
+        if cleaned_history and isinstance(cleaned_history[-1], AIMessage) and cleaned_history[-1].tool_calls:
+            if cleaned_history[-1].content:
+                cleaned_history[-1].content = AIMessage(content=str(cleaned_history[-1].content))
+            else:
+                cleaned_history.pop()
+        # Call base LLM directly (without tools bound) to force text generation
+        final_summary = await llm.ainvoke([fallback_prompt] + cleaned_history)
+        return {"messages": [final_summary]}
 
     # 4. Define tool node
     tool_node = ToolNode(mcp_tools)
 
     # 5. Define end logic
-    def should_continue(state: MessagesState):
+    def should_continue(state: AgentState) -> Literal["tools", "circuit_breaker", "__end__"]:
         last_message = state["messages"][-1]
         # Conditional Check: If the model generated tool calls, loop to the execution station
         if getattr(last_message, "tool_calls", None):
+            if state.get("iteration_count", 0) >= MAX_TOOL_ITERATIONS:
+                debug_print(f"Circuit breaker triggered: Exceeded {MAX_TOOL_ITERATIONS} iterations.")
+                return "circuit_breaker"
             debug_print("Redirecting to tool")
             return "tools"
         debug_print("Ending agentic workflow")
@@ -148,18 +195,21 @@ Only after writing this thought block are you allowed to invoke the tool paramet
         return END
 
     # 6. Build and compile the agent
-    workflow = StateGraph(MessagesState)
+    workflow = StateGraph(AgentState)
     workflow.add_node("agent", call_model)
     workflow.add_node("tools", tool_node)
     workflow.add_node("distill", distill_tool_response)
+    workflow.add_node("circuit_breaker", circuit_breaker)
     workflow.add_edge(START, "agent")
     workflow.add_edge("tools", "distill")
     workflow.add_edge("distill", "agent")
+    workflow.add_edge("circuit_breaker", END)
     workflow.add_conditional_edges(
         "agent",
         should_continue, # run this func to see what it returns
         {
             "tools": "tools",
+            "circuit_breaker": "circuit_breaker",
             END: END
         } # map the func result to the next dest
     )
@@ -171,8 +221,14 @@ async def run_agent_sandbox(user_prompt: str) -> str:
     compiled_agent = await compile_state_graph()
     debug_print(f"Dispatching graph execution loop for instruction: '{user_prompt}'...\n")
     # Execute the runtime system
-    initial_input = {"messages": [("user", user_prompt)]}
-    final_state = await compiled_agent.ainvoke(initial_input)
+    initial_input = {
+        "messages": [("user", user_prompt)],
+        "iteration_count": 0
+    }
+    final_state = await compiled_agent.ainvoke(
+        initial_input,
+        config={"recursion_limit": 25}
+    )
 
     debug_print("\nComplete Execution Steps")
     for i, message in enumerate(final_state["messages"], 1):

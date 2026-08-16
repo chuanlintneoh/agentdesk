@@ -1,4 +1,5 @@
-# Download Balance Sheet, Income Statement, Cash Flow tables from yfinance and save into local SQLite file for persistence
+# Finance: Download Balance Sheet, Income Statement, Cash Flow tables from yfinance and save into local SQLite file for persistence
+# Movie: Parse reviews, metadata, screenplay awards, and character tables from Kaggle dataset and save into local SQLite file for persistence
 import os
 import sys
 
