@@ -78,6 +78,9 @@ def render_steps(trace_list):
                         for t_idx, t_step in enumerate(thinking_steps):
                             node_name = t_step.get("node_name", f"Step {t_idx + 1}")
                             st.caption(f"Node Instance: {node_name}")
+
+                            if t_step.get("content"):
+                                st.info(t_step["content"])
                             
                             # Nested Expander 1: Tool Calls
                             if t_step.get("tool_calls"):
@@ -91,10 +94,7 @@ def render_steps(trace_list):
                                     for tr in t_step["tool_results"]:
                                         st.write(f"**{tr.get('name')}**")
                                         st.code(tr.get("content"), language="text")
-                                        
-                            # Include intermediate thinking thoughts if present
-                            if t_step.get("content"):
-                                st.info(t_step["content"])
+                                    
                 # Render the final structural markdown response outside/underneath the thinking block
                 if final_text_content:
                     st.markdown(final_text_content)
@@ -120,26 +120,27 @@ if (st.session_state.trace
     history_cutoff = len(st.session_state.trace)
 
     try:
-        with requests.post(
-            f"{FASTAPI_URL}/api/agent/stream",
-            json={"prompt": user_prompt},
-            stream=True
-        ) as r:
-            if not r.ok:
-                raise Exception("Server communication broken.")
-            
-            for line in r.iter_lines():
-                if line:
-                    decoded_line = line.decode('utf-8').strip()
-                    if decoded_line.startswith("data: "):
-                        data = json.loads(decoded_line[6:])
-                        
-                        # Append the incoming trace step object to history
-                        st.session_state.trace.append(data)
-                        
-                        # Dynamically group, isolate, and redraw everything in place
-                        with stream_container.container():
-                            render_steps(st.session_state.trace[history_cutoff:])
+        with st.spinner("AgentDesk is analyzing and executing tools..."):
+            with requests.post(
+                f"{FASTAPI_URL}/api/agent/stream",
+                json={"prompt": user_prompt},
+                stream=True
+            ) as r:
+                if not r.ok:
+                    raise Exception("Server communication broken.")
+                
+                for line in r.iter_lines():
+                    if line:
+                        decoded_line = line.decode('utf-8').strip()
+                        if decoded_line.startswith("data: "):
+                            data = json.loads(decoded_line[6:])
+                            
+                            # Append the incoming trace step object to history
+                            st.session_state.trace.append(data)
+                            
+                            # Dynamically group, isolate, and redraw everything in place
+                            with stream_container.container():
+                                render_steps(st.session_state.trace[history_cutoff:])
                             
         # Connection finished cleanly. Seal layouts permanently.
         st.session_state.is_streaming = False

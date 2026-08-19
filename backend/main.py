@@ -5,12 +5,15 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 import os
 from tools import mcp
+from agent import compile_state_graph
 from api import register_agent_routes
 
 mcp_app = mcp.http_app(path="/")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    app.state.agent = await compile_state_graph()
+
     async with mcp_app.lifespan(app):
         yield
 

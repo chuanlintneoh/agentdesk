@@ -9,5 +9,6 @@
 *.pyd
 **/.tmp/
 
-.env
+**/.env
 **/data/
+docker-compose.override.yaml

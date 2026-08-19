@@ -27,3 +27,10 @@ frontend/.next/
 .gitignore
 
 **/.tmp/
+**/data/
+
+# Ignore Docker-related files
+**/Dockerfile
+**/.dockerignore
+docker-compose.yaml
+docker-compose.override.yaml

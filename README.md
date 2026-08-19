@@ -5,50 +5,53 @@
 
 ## Run the App
 
-### Option A: Using Docker Compose (Recommended for Production & Local Testing)
-
-1. Copy `.env.example` to `.env` and configure your `GROQ_API_KEY`:
-   ```bash
-   cp .env.example .env
-   ```
-2. Build and run containers (Select one):
-   - Backend server only
-     ```bash
-     docker compose up --build
-     ```
-   - Backend server and Streamlit dashboard
-     ```bash
-     docker compose --profile streamlit up --build
-     ```
-   - Backend server and NextJS frontend
-     ```bash
-     docker compose --profile nextjs up --build
-     ```
-   - Backend server, NextJS frontend and Streamlit dashboard
-     ```bash
-     docker compose --profile all up --build
-     ```
-3. Access:
-   - Server documentations:
-     `http://localhost:8000/docs`
-   - NextJS frontend:
-     `http://localhost:3000`
-   - Streamlit dashboard:
-     `http://localhost:8501`
-
-### Option B: Local Development
-
-1. `python scripts/db_setup.py` # run script to setup example databases
-2. `uvicorn main:app --port 8000 --reload` (FastAPI backend with ASGI-mounted FastMCP server under `/mcp`)
-3. Run frontend (Select at least one):
-   - Streamlit dashboard (in the `dashboard/` directory)
-     ```bash
-     streamlit run app.py
-     ```
-   - NextJS frontend (in the `frontend/` directory)
-     ```bash
-     npm run dev
-     ```
+1.  Run script to setup example databases (in the `backend/` directory):
+    ```bash
+    python scripts/db_setup.py
+    ```
+2.  Copy `.env.example` to `.env` and configure your `GROQ_API_KEY`:
+    ```bash
+    cp .env.example .env
+    ```
+3.  Run backend and frontend services:
+    - Option A: Using Docker Compose (Recommended for Production & Local Testing)
+      - Backend server only
+        ```bash
+        docker compose up --build
+        ```
+      - Backend server and Streamlit dashboard
+        ```bash
+        docker compose --profile streamlit up --build
+        ```
+      - Backend server and NextJS frontend
+        ```bash
+        docker compose --profile nextjs up --build
+        ```
+      - Backend server, NextJS frontend and Streamlit dashboard
+        ```bash
+        docker compose --profile all up --build
+        ```
+    - Option B: Local Development
+      1. Start backend service with ASGI-mounted FastMCP server (in the `backend/` directory)
+         ```bash
+         uvicorn main:app --port 8000 --reload
+         ```
+      2. Run frontend service
+         - Streamlit dashboard (in the `dashboard/` directory)
+           ```bash
+           streamlit run app.py
+           ```
+         - NextJS frontend (in the `frontend/` directory)
+           ```bash
+           npm run dev
+           ```
+4.  Launch:
+    - Click [here](http://localhost:8000/docs) to access FastAPI server documentations:
+      `http://localhost:8000/docs`
+    - Click [here](http://localhost:3000) to access NextJS frontend:
+      `http://localhost:3000`
+    - Click [here](http://localhost:8501) to access Streamlit dashboard:
+      `http://localhost:8501`
 
 ## System Description
 

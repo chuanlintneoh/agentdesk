@@ -3,12 +3,13 @@ from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 from langchain_core.messages import SystemMessage, ToolMessage, HumanMessage, AIMessage
+from langchain_core.tools import StructuredTool
 from langchain_groq import ChatGroq
-from langchain_mcp_adapters.client import MultiServerMCPClient
 import tiktoken
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 import uuid
 import os
+from tools import TOOLS_LIST
 # import asyncio
 from helper.debug import debug_print
 
@@ -17,11 +18,11 @@ load_dotenv()
 # intercept when agent hits this number of tool invocations
 MAX_TOOL_ITERATIONS = int(os.getenv("MAX_TOOL_ITERATIONS", 8))
 # send raw payload to distillation if it exceeds this token count
-MAX_PAYLOAD_LENGTH = int(os.getenv("MAX_PAYLOAD_LENGTH", 200))
+MAX_PAYLOAD_LENGTH = int(os.getenv("MAX_PAYLOAD_LENGTH", 1200))
 # length of raw payload to send to distillation
-MAX_DISTILLATION_LENGTH = int(os.getenv("MAX_DISTILLATION_LENGTH", 12000))
+MAX_DISTILLATION_LENGTH = int(os.getenv("MAX_DISTILLATION_LENGTH", 16000))
 # fallback truncation length if distillation fails
-# MANUAL_TRUNCATION_LENGTH = int(os.getenv("MANUAL_TRUNCATION_LENGTH", 6000))
+MANUAL_TRUNCATION_LENGTH = int(os.getenv("MANUAL_TRUNCATION_LENGTH", 4000))
 
 tokenizer = tiktoken.get_encoding("cl100k_base")
 def count_tokens(text: str) -> int:
@@ -33,20 +34,16 @@ class AgentState(MessagesState):
 async def compile_state_graph() -> CompiledStateGraph:
     debug_print("Initializing Multi-Server MCP Gateway & Custom Orchestration Graph...")
 
-    mcp_token = os.getenv("MCP_SECRET_TOKEN", "secret-token-default")
-    client = MultiServerMCPClient({
-        "core_utility_server": {
-            "transport": "http",
-            "url": "http://localhost:8000/mcp/",
-            "headers": {
-                "X-MCP-Token": mcp_token
-            }
-        }
-    })
-
     # 1. Define tools and model
-    mcp_tools = await client.get_tools()
-    debug_print(f"Auto-discovered {len(mcp_tools)} tools from FastMCP server.")
+    mcp_tools = [
+        StructuredTool.from_function(
+            func=fn,
+            name=fn.__name__,
+            description=fn.__doc__ or ""
+        )
+        for fn in TOOLS_LIST
+    ]
+    debug_print(f"Loaded {len(mcp_tools)} tools directly from FastMCP.")
     # https://console.groq.com/docs/rate-limits
     # llm = ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct", temperature=0) # deprecate 17/7/2026
     # llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0) # deprecate 16/8/2026
@@ -69,18 +66,14 @@ You are AgentDesk, an autonomous, highly capable AI Agent designed to solve comp
 6. Schema-Driven Corrections: If a query fails due to a missing column, do not attempt to guess a replacement column. Review the exact schema log details previously returned by your metadata tools. If the required information cannot be mapped to an existing schema column, fallback to querying only the verified baseline columns or use a wildcard discovery check if allowed, rather than guessing data fields.
 7. Complete Record Exhaustion: When querying a specific row, timestamp, or unique record index, extract all attributes required for downstream analysis in a single round-trip query. You are strictly prohibited from making separate sequential tool calls to fetch additional attributes from that same record layer later. Optimize data density by selecting targeted fields if known, or fallback to SELECT * only if the structural requirements are completely ambiguous.
 8. Testing Assertions: When explicitly commanded to 'test' or 'verify' an MCP tool framework, you are expected to execute a baseline sample request, confirm that the tools return structural payloads successfully, and immediately terminate the loop with a summary report. Do not attempt to cross-verify database counts or loop through row records unless explicitly instructed.
-9. Strict Data Grounding
-You are strictly prohibited from generating content out of your own internal knowledge base. You MUST first use the tools to see if the context exists internally. If you have no tool data, you must state that you cannot find that information in the provided data stores. Do not invent details.
-10. Comprehensive Parallel Discovery: When starting an objective, you MUST execute schema and environment discovery tools across ALL relevant data store modalities simultaneously in a single parallel call block. You are strictly prohibited from limiting initial discovery to a single data store type if the prompt requests attributes spanning multiple content types.
+9. Strict Data Grounding & Fallback Handling: You are strictly prohibited from generating domain data out of your internal knowledge. You MUST use tools to retrieve internal context first. If a discovery tool indicates that a database or collection is empty or uninitialized, explicitly state that no records/tables were found in that data store. Do not invent tables, columns, or sample records.
+10. Comprehensive Discovery & Capability Onboarding: When answering tasks spanning multiple data modalities OR when asked about your capabilities, abilities, or what questions can be asked, you MUST execute discovery across ALL connected data stores (`get_database_blueprint` and `list_vector_collections`) in parallel. Ground your capability explanation and example questions in the ACTUAL tables, columns, and vector collections discovered in the live environment.
 11. Multi-Source & Modality Mapping: User prompts often require combining structured data and unstructured content. You MUST analyze the prompt to identify all required content types and map them against the capabilities/descriptions of ALL available tool suites. Never assume one data store contains all necessary modalities.
 12. Exhaustive Cross-Store Verification: If a specific data asset is not present in the schema of one data store, you MUST discover and query the schemas/indexes of your other configured data stores before concluding the data is unavailable or falling back to summarizing partial/proxy fields.
+13. No Duplicate Invocations: You are FORBIDDEN from executing the exact same tool query or SQL statement more than once. If a tool call returns a result, accept that this is the only data present in the database and synthesize your answer immediately.
 
-# Analytical Protocol (Mandatory Chain of Thought)
-Before executing ANY tool call, you MUST output an explicit, concise text reasoning block explaining your structural analysis. You must answer:
-1. What specific pieces of data are still missing to achieve the user's objective?
-2. Exactly why the chosen tool and query parameters are the most optimal way to extract that data.
-3. Verify that your planned parameters will not return empty or redundant payloads. Never execute empty lookups (like 'LIMIT 0') or duplicate queries.
-Only after writing this thought block are you allowed to invoke the tool parameters.
+# Analytical Protocol (Pre-Tool Reasoning)
+Before dispatching tool calls, emit a concise diagnostic statement (1-2 sentences) stating what data is required and the specific tool(s) you are calling to retrieve it. Execute all tool calls using native tool-call invocations.
 
 # Tone & Style
 - Be objective, analytical, and highly precise when describing metrics and data relationships.
@@ -143,7 +136,10 @@ Only after writing this thought block are you allowed to invoke the tool paramet
                         raise ValueError("Compressor LLM returned an empty summary content block.")
                 except Exception as e:
                     debug_print(f"Distillation LLM failure or token block: {str(e)}. Falling back to safe programmatic truncation.")
-                    final_content = f"[TRUNCATED DATA PAYLOAD - SIZE LIMIT EXCEEDED]:\n{safe_input_text}\n... [Remaining data clipped to fit token window]"
+                    is_clipped = len(content_text) > MANUAL_TRUNCATION_LENGTH
+                    truncated_text = content_text[:MANUAL_TRUNCATION_LENGTH]
+                    clipped_suffix = "\n... [Remaining data clipped to fit token window]" if is_clipped else ""
+                    final_content = f"[TRUNCATED DATA PAYLOAD - SIZE LIMIT EXCEEDED]:\n{truncated_text}{clipped_suffix}"
                 
                 message_id = getattr(last_message, "id", None) or str(uuid.uuid4())
                 distilled_message = ToolMessage(
@@ -161,20 +157,32 @@ Only after writing this thought block are you allowed to invoke the tool paramet
     async def circuit_breaker(state: AgentState) -> dict[str, Any]:
         fallback_prompt = SystemMessage(
             content=(
-                f"The tool execution threshold ({MAX_TOOL_ITERATIONS} rounds) has been reached. "
-                "Synthesize a final response based solely on the data retrieved so far. "
-                "Clearly list what was verified and mention what remains incomplete."
+                f"SYSTEM NOTICE: The maximum tool execution threshold ({MAX_TOOL_ITERATIONS} iterations) has been reached.\n"
+                "CRITICAL INSTRUCTION: You are strictly forbidden from executing any tool calls, emitting JSON arguments, or using tool syntax.\n"
+                "Provide a direct final answer in natural language based solely on the verified data in the conversation history.\n"
+                "Summarize what was successfully found and explicitly note what could not be verified."
             )
         )
         
         cleaned_history = list(state["messages"])
         if cleaned_history and isinstance(cleaned_history[-1], AIMessage) and cleaned_history[-1].tool_calls:
-            if cleaned_history[-1].content:
-                cleaned_history[-1].content = AIMessage(content=str(cleaned_history[-1].content))
-            else:
-                cleaned_history.pop()
-        # Call base LLM directly (without tools bound) to force text generation
-        final_summary = await llm.ainvoke([fallback_prompt] + cleaned_history)
+            # Drop last unfulfilled tool call
+            cleaned_history.pop()
+        
+        default_fallback_text = (
+            f"**Execution Threshold Reached ({MAX_TOOL_ITERATIONS} iterations):**\n\n"
+            "The agent reached its maximum allowable tool iterations before completing the retrieval loop."
+        )
+        try:
+            # Call base LLM directly (without tools bound) to force text generation
+            final_summary = await llm.ainvoke([fallback_prompt] + cleaned_history)
+            if getattr(final_summary, "tool_calls", None) or not str(final_summary.content).strip():
+                debug_print("[Circuit Breaker] LLM still emitted tool calls or empty output. Using hardcoded fallback.")
+                final_summary = AIMessage(content=default_fallback_text)
+        except Exception as e:
+            debug_print(f"[Circuit Breaker] LLM invocation failed: {str(e)}. Returning hardcoded fallback response.")
+            final_summary = AIMessage(content=default_fallback_text)
+
         return {"messages": [final_summary]}
 
     # 4. Define tool node
@@ -217,8 +225,8 @@ Only after writing this thought block are you allowed to invoke the tool paramet
     debug_print("Agent compiled successfully.")
     return compiled_agent
     
-async def run_agent_sandbox(user_prompt: str) -> str:
-    compiled_agent = await compile_state_graph()
+async def run_agent_sandbox(user_prompt: str, agent: Optional[CompiledStateGraph] = None) -> str:
+    compiled_agent = agent or await compile_state_graph()
     debug_print(f"Dispatching graph execution loop for instruction: '{user_prompt}'...\n")
     # Execute the runtime system
     initial_input = {

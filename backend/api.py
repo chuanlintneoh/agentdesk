@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from mock_agent import AgentState, AgenticOrchestrator
-from agent import compile_state_graph, run_agent_sandbox
+from agent import run_agent_sandbox
 import json
 import asyncio
 from langchain_core.messages import AIMessage, ToolMessage
@@ -39,13 +39,16 @@ def register_agent_routes(api: FastAPI):
         }
 
     @api.post("/api/agent/run")
-    async def run_agent_loop(payload: QueryRequest):
+    async def run_agent_loop(request: Request, payload: QueryRequest):
         if not payload.prompt.strip():
             raise HTTPException(status_code=400, detail="Prompt string cannot be empty.")
 
         try:
             debug_print(f"Received frontend query: '{payload.prompt}'")
-            final_answer = await run_agent_sandbox(payload.prompt)
+            final_answer = await run_agent_sandbox(
+                user_prompt=payload.prompt,
+                agent=request.app.state.agent
+            )
             return {
                 "status": "success",
                 "output": final_answer
@@ -59,15 +62,14 @@ def register_agent_routes(api: FastAPI):
             )
 
     @api.post("/api/agent/stream")
-    async def stream_agent_loop(payload: QueryRequest):
+    async def stream_agent_loop(request: Request, payload: QueryRequest):
         if not payload.prompt.strip():
             raise HTTPException(status_code=400, detail="Prompt string cannot be empty.")
         debug_print(f"Received frontend query: '{payload.prompt}'")
+        compiled_agent = request.app.state.agent
 
         async def event_generator():
             try:
-                # Initialize compiled graph
-                compiled_agent = await compile_state_graph()
                 initial_input = {
                     "messages": [("user", payload.prompt)],
                     "iteration_count": 0

@@ -9,9 +9,9 @@ langchain-mcp-adapters
 pytest-asyncio
 langchain-groq
 sentence-transformers
+tiktoken
 pytest
 
 # Script dependencies
-yfinance
-sec-edgar-downloader
-# kaggle
+# yfinance
+# sec-edgar-downloader
