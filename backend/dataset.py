@@ -22,7 +22,8 @@ DATASET_PROFILES: Dict[str, Dict[str, Any]] = {
     # }
 }
 
-ACTIVE_DATASET_NAME = os.getenv("ACTIVE_DATASET", "corporateAAPL")
+# ACTIVE_DATASET_NAME = os.getenv("ACTIVE_DATASET", "corporateAAPL")
+ACTIVE_DATASET_NAME = os.getenv("ACTIVE_DATASET", "movies")
 current_profile: Dict[str, Any] = {}
 
 def load_dataset_profile(dataset_name: str) -> None:
